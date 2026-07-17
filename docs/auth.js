@@ -4,9 +4,13 @@
 // ============================================================
 (() => {
   const KEY = 'predictor_auth_v1';
+  const SESSION_HOURS = 24; // بيطلب كلمة السر تاني بعد المدة دي
 
-  // الجهاز فاكر كلمة السر الصحيحة الحالية؟ ادخل على طول
-  if (localStorage.getItem(KEY) === window.PASS_HASH) return;
+  // الجهاز فاكر كلمة السر الصحيحة والجلسة لسه سارية؟ ادخل على طول
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY));
+    if (saved && saved.hash === window.PASS_HASH && Date.now() - saved.ts < SESSION_HOURS * 3600 * 1000) return;
+  } catch { /* جلسة قديمة أو تالفة — هيطلب كلمة السر */ }
 
   // اقفل الصفحة لحد ما يدخل كلمة السر
   document.documentElement.classList.add('locked');
@@ -38,7 +42,7 @@
       const val = document.getElementById('lock-pass').value;
       const hash = await sha256(val);
       if (hash === window.PASS_HASH) {
-        localStorage.setItem(KEY, hash);
+        localStorage.setItem(KEY, JSON.stringify({ hash, ts: Date.now() }));
         overlay.remove();
         document.documentElement.classList.remove('locked');
       } else {

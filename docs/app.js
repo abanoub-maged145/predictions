@@ -161,6 +161,9 @@ async function loadMatches() {
 }
 
 // تحويل حدث ESPN لكائن ماتش موحد
+// بطولات بتتلعب على ملاعب محايدة — مفيش ميزة أرض حتى لو البيانات سجلت "صاحب أرض" شكلي
+const NEUTRAL_LEAGUES = new Set(['fifa.world', 'uefa.euro', 'conmebol.america', 'caf.nations']);
+
 function toMatch(ev, leagueCode) {
   const comp = ev.competitions?.[0];
   if (!comp) return null;
@@ -174,7 +177,7 @@ function toMatch(ev, leagueCode) {
     date: ev.date,
     state: ev.status?.type?.state || 'pre',
     statusText: ev.status?.type?.shortDetail || '',
-    neutralSite: !!comp.neutralSite,
+    neutralSite: !!comp.neutralSite || NEUTRAL_LEAGUES.has(leagueCode),
     home: { id: home.id, name: home.team?.displayName, logo: home.team?.logo, score: home.score },
     away: { id: away.id, name: away.team?.displayName, logo: away.team?.logo, score: away.score },
   };
@@ -504,7 +507,7 @@ async function openAnalysis(m) {
       <div class="an-team"><img src="${m.home.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.home.name)}</h3></div>
       <div class="an-vs">
         <div class="an-time">${m.state === 'pre' ? fmtTime(m.date) : (m.state === 'in' ? 'مباشر' : `${m.home.score} - ${m.away.score}`)}</div>
-        <div class="an-league">${escapeHtml(m.leagueName)}</div>
+        <div class="an-league">${escapeHtml(m.leagueName)}${m.neutralSite ? ' · ملعب محايد 🏟' : ''}</div>
       </div>
       <div class="an-team"><img src="${m.away.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.away.name)}</h3></div>
     </div>

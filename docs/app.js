@@ -215,9 +215,15 @@ async function loadLeagueFixtures(code) {
   renderLeagueMatches();
 }
 
+// فهرس آخر التحليلات المحفوظة عشان الكروت تفتكرها بعد قفل الصفحة
+function refreshAutologIndex() {
+  state.autologByEvent = Object.fromEntries(store.get(AUTOLOG_KEY, []).map(r => [r.id, r]));
+}
+
 function renderLeagueMatches() {
   const grid = $('#matches-area');
   grid.innerHTML = '';
+  refreshAutologIndex();
   $('#day-title').textContent = `🏆 ${LEAGUE_NAME[state.leagueView]}`;
 
   if (!state.matches.length) {
@@ -283,6 +289,7 @@ function renderCurrent() {
 function renderMatches() {
   const grid = $('#matches-area');
   grid.innerHTML = '';
+  refreshAutologIndex();
   $('#day-title').textContent = fmtDayName(state.date);
 
   const filtered = state.leagueFilter ? state.matches.filter(m => m.league === state.leagueFilter) : state.matches;
@@ -323,7 +330,10 @@ function matchCard(m) {
   const isDone = m.state === 'post';
   const card = el('article', 'match-card' + (isLive ? ' live' : ''));
   const a = state.analysisCache[m.id];
-  const badge = a ? `<span class="conf-badge ${confClass(a.best.conf)}">${a.best.conf}%</span>` : '';
+  // لو مفيش تحليل في الجلسة دي، هات آخر تحليل محفوظ من السجل التلقائي
+  const saved = !a ? state.autologByEvent?.[m.id]?.best : null;
+  const best = a ? a.best : (saved?.label ? { pickLabel: saved.label, conf: saved.conf } : null);
+  const badge = best ? `<span class="conf-badge ${confClass(best.conf)}">${best.conf}%</span>` : '';
   card.innerHTML = `
     <div class="mc-top">
       <span class="mc-time">${isLive ? '<span class="live-dot"></span> مباشر' : isDone ? 'انتهى' : fmtTime(m.date)}</span>
@@ -340,7 +350,7 @@ function matchCard(m) {
         <span>${escapeHtml(m.away.name)}</span>
       </div>
     </div>
-    <div class="mc-bottom">${a ? `<span class="mc-pick">🎯 ${escapeHtml(a.best.pickLabel)}</span>` : '<span class="mc-hint">اضغط للتحليل الكامل</span>'}</div>
+    <div class="mc-bottom">${best ? `<span class="mc-pick">🎯 ${escapeHtml(best.pickLabel)}</span>${!a ? ' <span class="mc-hint">(تحليل سابق — اضغط للتحديث)</span>' : ''}` : '<span class="mc-hint">اضغط للتحليل الكامل</span>'}</div>
   `;
   card.onclick = () => openAnalysis(m);
   return card;
@@ -404,6 +414,7 @@ function autolog(m, a) {
   const rec = {
     id: m.id, league: m.league, kickoff: m.date,
     home: m.home.name, away: m.away.name,
+    best: { label: a.best.pickLabel, conf: a.best.conf },
     markets: a.markets.map(mk => ({ market: mk.market, pickCode: mk.pick, prob: +mk.prob.toFixed(3), conf: mk.conf })),
     leans: a.pillarLeans,
     status: 'pending', score: null,

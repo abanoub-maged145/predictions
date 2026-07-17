@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>المُتنبئ — تحليل وتوقع ماتشات الكورة</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon">⚽</span>
+      <div>
+        <h1>المُتنبئ</h1>
+        <p>محرك الثقة الذكي لتحليل الماتشات</p>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-btn active" data-view="matches">📅 ماتشات اليوم</button>
+      <button class="nav-btn" data-view="slips">📂 مجموعاتي</button>
+      <button class="nav-btn" data-view="stats">🧠 دقة النظام</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- عرض الماتشات -->
+    <section id="view-matches">
+      <div class="controls">
+        <div class="date-row">
+          <div id="date-chips" class="date-chips"></div>
+          <input type="date" id="date-input" class="date-input">
+        </div>
+        <div class="league-bar-row">
+          <span class="league-bar-label">🏆 حسب الدوري:</span>
+          <div id="league-bar" class="league-chips league-bar"></div>
+        </div>
+        <div class="controls-side">
+          <h2 id="day-title" class="day-title"></h2>
+          <button id="btn-top-picks" class="primary-btn">⚡ أضمن اختيارات اليوم</button>
+        </div>
+      </div>
+
+      <div id="top-picks" class="top-picks hidden"></div>
+      <div id="matches-area"></div>
+    </section>
+
+    <!-- المجموعات المحفوظة -->
+    <section id="view-slips" class="hidden">
+      <div id="slips-area"></div>
+    </section>
+
+    <!-- دقة النظام والتعلم الذاتي -->
+    <section id="view-stats" class="hidden">
+      <div id="stats-area"></div>
+    </section>
+  </main>
+
+  <!-- نافذة التحليل -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button id="modal-close" class="modal-close">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <footer class="foot">
+    التوقعات مبنية على تحليل إحصائي (مواجهات مباشرة + فورمة + تشكيلات) — مفيش توقع مضمون 100%، النسبة بتعبر عن ثقة النظام بصدق.
+  </footer>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

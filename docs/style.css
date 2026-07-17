@@ -333,6 +333,40 @@ main { max-width: 1100px; margin: 0 auto; padding: 22px 20px 60px; }
   padding: 18px; border-top: 1px solid var(--border); line-height: 1.7;
 }
 
+/* ---------- شاشة القفل ---------- */
+html.locked .topbar, html.locked main, html.locked .foot { display: none !important; }
+#lock-screen {
+  position: fixed; inset: 0; z-index: 999;
+  background: radial-gradient(900px 500px at 50% -10%, #1a2a4d 0%, var(--bg) 60%);
+  display: grid; place-items: center; padding: 20px;
+}
+.lock-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 20px;
+  padding: 38px 34px; text-align: center; width: 100%; max-width: 360px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+.lock-icon {
+  font-size: 34px; width: 68px; height: 68px; display: grid; place-items: center; margin: 0 auto 14px;
+  background: linear-gradient(135deg, var(--gold), #d98e1b); border-radius: 18px;
+}
+.lock-card h2 { font-size: 22px; font-weight: 900; margin-bottom: 4px; }
+.lock-card > p { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+#lock-form { display: flex; flex-direction: column; gap: 10px; }
+#lock-pass {
+  font-family: inherit; font-size: 16px; font-weight: 700; text-align: center;
+  padding: 12px; border-radius: 12px;
+  background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+}
+#lock-pass:focus { outline: none; border-color: var(--gold); }
+#lock-form button {
+  font-family: inherit; font-size: 15px; font-weight: 800;
+  padding: 12px; border-radius: 12px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--gold), #e09c25); color: #1a1205;
+}
+.lock-error { font-size: 13px; color: var(--red); margin-top: 12px; font-weight: 700; }
+.shake { animation: shake .4s; }
+@keyframes shake { 25% { transform: translateX(6px); } 50% { transform: translateX(-6px); } 75% { transform: translateX(4px); } }
+
 @media (max-width: 640px) {
   .topbar { padding: 14px 16px; }
   main { padding: 16px 12px 50px; }

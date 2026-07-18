@@ -94,6 +94,12 @@ main { max-width: 1100px; margin: 0 auto; padding: 22px 20px 60px; }
 .primary-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 9px 22px rgba(245, 185, 66, .32); }
 .primary-btn:disabled { opacity: .6; cursor: wait; }
 
+.value-btn {
+  background: linear-gradient(135deg, #86d8f7, #38a3d8); color: #06202e;
+  box-shadow: 0 6px 16px rgba(86, 190, 232, .22);
+}
+.value-btn:hover:not(:disabled) { box-shadow: 0 9px 22px rgba(86, 190, 232, .32); }
+
 /* ---------- أضمن الاختيارات ---------- */
 .top-picks {
   background: linear-gradient(135deg, rgba(245,185,66,.09), rgba(245,185,66,.02));

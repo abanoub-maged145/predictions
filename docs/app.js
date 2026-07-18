@@ -70,7 +70,8 @@ const store = {
 const STANDINGS_KEY = 'predictor_standings_v1'; // كاش عام مشترك — مجرد بيانات ترتيب
 
 // كل مستخدم ليه مساحة تخزين خاصة ببصمة الباسورد بتاعه — نشاط حد مش بيظهر لحد تاني
-const nsKey = base => `${base}_${(window.AUTH_HASH || 'anon').slice(0, 10)}`;
+// DATA_NS ثابت حتى لو طريقة التحقق اتغيرت (ترقية PBKDF2) عشان البيانات متضيعش
+const nsKey = base => `${base}_${(window.DATA_NS || window.AUTH_HASH || 'anon').slice(0, 10)}`;
 const slipsKey = () => nsKey('predictor_slips_v1');
 const autologKey = () => nsKey('predictor_autolog_v1');
 const learnedKey = () => nsKey('predictor_learned_v1');
@@ -431,7 +432,7 @@ function autolog(m, a) {
     id: m.id, league: m.league, kickoff: m.date,
     home: m.home.name, away: m.away.name,
     best: { label: a.best.pickLabel, conf: a.best.conf },
-    markets: a.markets.map(mk => ({ market: mk.market, pickCode: mk.pick, prob: +mk.prob.toFixed(3), conf: mk.conf })),
+    markets: a.markets.map(mk => ({ market: mk.market, pickCode: mk.pick, prob: +mk.prob.toFixed(3), mkt: mk.mkt != null ? +mk.mkt.toFixed(3) : null, conf: mk.conf })),
     leans: a.pillarLeans,
     status: 'pending', score: null,
   };
@@ -605,14 +606,12 @@ async function openAnalysis(m) {
   renderCurrent();
 }
 
-// ---------- أضمن اختيارات اليوم ----------
-async function analyzeAll() {
-  if (state.bulkRunning) return;
+// ---------- التحليل الجماعي (لأضمن الاختيارات وفرص القيمة) ----------
+async function bulkAnalyze(btn, idleLabel) {
   const pre = state.matches.filter(m => m.state === 'pre');
-  if (!pre.length) { toast('مفيش ماتشات جاية النهارده للتحليل'); return; }
+  if (!pre.length) { toast('مفيش ماتشات جاية النهارده للتحليل'); return null; }
 
   state.bulkRunning = true;
-  const btn = $('#btn-top-picks');
   const total = pre.length;
   let done = 0;
   btn.disabled = true;
@@ -630,7 +629,15 @@ async function analyzeAll() {
 
   state.bulkRunning = false;
   btn.disabled = false;
-  btn.textContent = '⚡ أضمن اختيارات اليوم';
+  btn.textContent = idleLabel;
+  return pre;
+}
+
+// ---------- أضمن اختيارات اليوم ----------
+async function analyzeAll() {
+  if (state.bulkRunning) return;
+  const pre = await bulkAnalyze($('#btn-top-picks'), '⚡ أضمن اختيارات اليوم');
+  if (!pre) return;
 
   const ranked = pre
     .map(m => ({ m, a: state.analysisCache[m.id] }))
@@ -652,6 +659,47 @@ async function analyzeAll() {
         <span>${escapeHtml(a.best.pickLabel)} · ${fmtTime(m.date)}${valueMk ? ' · 💎 فيه فرصة قيمة' : ''}</span>
       </div>
       <span class="conf-badge ${confClass(a.best.conf)}">${a.best.conf}%</span>
+    `;
+    row.onclick = () => openAnalysis(m);
+    top.appendChild(row);
+  }
+  renderCurrent();
+}
+
+// ---------- فرص القيمة: توقعات نظامنا شايفها أعلى من سعر السوق بفارق واضح ----------
+async function showValuePicks() {
+  if (state.bulkRunning) return;
+  const pre = await bulkAnalyze($('#btn-value-picks'), '💎 فرص القيمة');
+  if (!pre) return;
+
+  const rows = [];
+  for (const m of pre) {
+    const a = state.analysisCache[m.id];
+    if (!a) continue;
+    for (const mk of a.markets) {
+      if (mk.value) rows.push({ m, mk });
+    }
+  }
+  rows.sort((x, y) => y.mk.value - x.mk.value);
+
+  const top = $('#top-picks');
+  top.classList.remove('hidden');
+  top.innerHTML = '<h2 class="tp-title">💎 فرص القيمة النهارده</h2><p class="pillar-note" style="margin-bottom:10px">توقعات نظامنا بيقدّر احتمالها أعلى من تقدير السوق بـ 7% أو أكتر — دي المواضع اللي المحرك بيضيف فيها قيمة فوق السوق (لو المحرك صح طبعاً).</p>';
+  if (!rows.length) {
+    top.innerHTML += '<p class="pillar-note">مفيش فرص قيمة واضحة النهارده — النظام والسوق شايفين نفس الصورة تقريباً. ده طبيعي في معظم الأيام.</p>';
+    renderCurrent();
+    return;
+  }
+  for (const { m, mk } of rows) {
+    const row = el('div', 'tp-row');
+    row.innerHTML = `
+      <img src="${m.home.logo || ''}" onerror="this.style.visibility='hidden'">
+      <img src="${m.away.logo || ''}" onerror="this.style.visibility='hidden'">
+      <div class="tp-info">
+        <b>${escapeHtml(m.home.name)} × ${escapeHtml(m.away.name)}</b>
+        <span>${escapeHtml(mk.pickLabel)} (${mk.marketLabel}) · احتمالنا ${Math.round(mk.prob * 100)}% ضد السوق ${mk.mkt != null ? Math.round(mk.mkt * 100) + '%' : '—'} · ${fmtTime(m.date)}</span>
+      </div>
+      <span class="conf-badge conf-high">💎 +${mk.value}%</span>
     `;
     row.onclick = () => openAnalysis(m);
     top.appendChild(row);
@@ -710,6 +758,29 @@ function renderSlips() {
   `;
   area.appendChild(header);
   header.querySelector('#btn-refresh-results').onclick = refreshResults;
+
+  // المزامنة بين الأجهزة
+  const canUpload = !!(localStorage.getItem(GH_TOKEN_KEY) || localStorage.getItem(GH_TOKEN_ENC_KEY)) && window.AUTH_ROLE === 'admin';
+  const syncBox = el('div', 'slip-box');
+  syncBox.innerHTML = `
+    <div class="slip-head"><h3>🔁 بياناتك على أكتر من جهاز</h3></div>
+    <p class="pillar-note" style="margin-bottom:10px">
+      مجموعاتك وسجل التعلم متخزنين على الجهاز ده بس. عشان تنقلهم: صدّر ملف وافتحه على الجهاز التاني،
+      ${canUpload ? 'أو ارفع نسخة مشفرة على الموقع تقدر تنزلها من أي جهاز تدخل منه بنفس الباسورد.' : 'أو نزّل آخر نسخة مشفرة مرفوعة لحسابك (الرفع بيتم من جهاز الأدمن).'}
+    </p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <button id="btn-export-data" class="save-btn">⬇️ تصدير ملف</button>
+      <button id="btn-import-data" class="save-btn">⬆️ استيراد ملف</button>
+      ${canUpload ? '<button id="btn-cloud-up" class="save-btn">☁️ ارفع نسخة مشفرة</button>' : ''}
+      <button id="btn-cloud-down" class="save-btn">☁️ هات آخر نسخة</button>
+    </div>
+  `;
+  area.appendChild(syncBox);
+  syncBox.querySelector('#btn-export-data').onclick = exportMyData;
+  syncBox.querySelector('#btn-import-data').onclick = importMyData;
+  syncBox.querySelector('#btn-cloud-down').onclick = cloudDownload;
+  const upBtn = syncBox.querySelector('#btn-cloud-up');
+  if (upBtn) upBtn.onclick = cloudUpload;
 
   if (!slips.length) {
     area.appendChild(el('div', 'empty-state', '<div class="empty-icon">📂</div><h3>مفيش مجموعات محفوظة</h3><p>افتح تحليل أي ماتش واضغط 💾 احفظ جنب التوقع اللي عاجبك.</p>'));
@@ -850,6 +921,50 @@ function renderStats() {
   calBox.appendChild(tbl);
   area.appendChild(calBox);
 
+  // محاكاة الربحية (ROI): لو مشينا ورا التوقعات بوحدة رهان واحدة — نكسب ولا نخسر؟
+  const simulate = pickMarkets => {
+    let bets = 0, profit = 0, wins = 0;
+    for (const rec of settledLogs) {
+      const [h, a] = (rec.score || '').split('-').map(Number);
+      if (isNaN(h) || isNaN(a)) continue;
+      for (const mk of pickMarkets(rec)) {
+        if (mk.mkt == null || mk.mkt <= 0) continue; // محتاجين سعر السوق عشان نحسب العائد
+        const ok = Engine.evaluatePick({ market: mk.market, pickCode: mk.pickCode }, h, a);
+        if (ok === null) continue;
+        bets++;
+        if (ok) { profit += 1 / mk.mkt - 1; wins++; } else profit -= 1;
+      }
+    }
+    return { bets, profit, wins, roi: bets ? (profit / bets) * 100 : null };
+  };
+  const simBest = simulate(rec => rec.markets?.length ? [rec.markets[0]] : []);
+  const simValue = simulate(rec => (rec.markets || []).filter(mk => mk.mkt != null && mk.prob - mk.mkt >= 0.07));
+
+  const roiRow = (label, s) => `
+    <div class="calib-row">
+      <span class="cal-label">${label}</span>
+      <div class="pb"><div class="pb-fill" style="width:${s.bets ? Math.min(Math.max(50 + s.roi, 0), 100) : 0}%"></div></div>
+      <span class="cal-val">${s.bets
+        ? `${s.roi >= 0 ? '📈 ربح' : '📉 خسارة'} ${Math.abs(s.profit).toFixed(1)} وحدة من ${s.bets} رهان (عائد ${s.roi >= 0 ? '+' : ''}${s.roi.toFixed(1)}% · صح ${s.wins}/${s.bets})`
+        : 'لسه مفيش رهانات ليها سعر سوق محسوب'}</span>
+    </div>`;
+  const roiBox = el('div', 'slip-box');
+  roiBox.innerHTML = `
+    <div class="slip-head"><h3>💰 محاكاة الربحية (ROI)</h3></div>
+    <p class="pillar-note" style="margin-bottom:10px">
+      تجربة ورقية: لو راهنّا وحدة واحدة على كل توقع بأسعار السوق العادلة — النظام كان هيكسب ولا يخسر؟
+      ده الاختبار الحقيقي: الدقة لوحدها متقولش حاجة، لأن التوقعات السهلة أسعارها واطية.
+    </p>
+    ${roiRow('🎯 أفضل توقع لكل ماتش', simBest)}
+    ${roiRow('💎 فرص القيمة بس', simValue)}
+    <p class="pillar-note" style="margin-top:10px">
+      الحساب بالأسعار العادلة (بعد شيل هامش الشركة) — يعني الأرقام الحقيقية هتكون أقل شوية.
+      عائد موجب ثابت على 50+ رهان = النظام فعلاً بيضيف قيمة فوق السوق.
+      ${settledLogs.some(r => r.markets?.some(mk => mk.mkt == null)) ? '<br>ملحوظة: التوقعات المتسجلة قبل التحديث ده مفيهاش سعر سوق محفوظ فمش داخلة في الحساب.' : ''}
+    </p>
+  `;
+  area.appendChild(roiBox);
+
   // أوزان الأعمدة المتعلمة
   const w = learned.weights || Engine.DEFAULT_WEIGHTS;
   const pl = learned.pillars;
@@ -930,16 +1045,170 @@ async function learnFromResults() {
   toast(newly ? `🧠 النظام اتعلم من ${newly} ماتش جديد` : 'مفيش ماتشات جديدة خلصت لسه');
 }
 
+// ---------- المزامنة بين الأجهزة ----------
+// البيانات بتتشفر AES-GCM بمفتاح مشتق من كلمة السر نفسها (PBKDF2) —
+// فبتتفك على أي جهاز داخل بنفس الباسورد، ومحدش تاني يقدر يقراها حتى لو الملف عام
+const SYNC_DIR = 'docs/sync';
+const syncId = () => (window.DATA_NS || (window.AUTH_HASH || '').slice(0, 10));
+
+async function dataCryptoKey(usages) {
+  if (!window.DATA_KEY) return null;
+  const raw = Uint8Array.from(atob(window.DATA_KEY), c => c.charCodeAt(0));
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, usages);
+}
+
+function collectMyData() {
+  return {
+    v: 1,
+    exportedAt: new Date().toISOString(),
+    slips: loadSlips(),
+    autolog: store.get(autologKey(), []),
+    learned: loadLearned(),
+  };
+}
+
+// دمج بيانات جهاز تاني مع بيانات الجهاز ده — من غير ما نضيّع حاجة من الاتنين
+function mergeMyData(incoming) {
+  if (!incoming || incoming.v !== 1) throw new Error('صيغة الملف مش مفهومة');
+
+  const slips = loadSlips();
+  for (const inSlip of (incoming.slips || [])) {
+    const local = slips.find(s => s.id === inSlip.id);
+    if (!local) { slips.push(inSlip); continue; }
+    for (const it of (inSlip.items || [])) {
+      const cur = local.items.find(x => x.eventId === it.eventId && x.market === it.market);
+      if (!cur) local.items.push(it);
+      else if (cur.status === 'pending' && it.status !== 'pending') Object.assign(cur, it);
+    }
+  }
+  saveSlips(slips);
+
+  const log = store.get(autologKey(), []);
+  const byId = new Map(log.map(r => [r.id, r]));
+  for (const rec of (incoming.autolog || [])) {
+    const cur = byId.get(rec.id);
+    if (!cur) { log.push(rec); byId.set(rec.id, rec); }
+    else if (cur.status === 'pending' && rec.status === 'settled') Object.assign(cur, rec);
+  }
+  store.set(autologKey(), log);
+
+  const learned = loadLearned();
+  if ((incoming.learned?.settled || 0) > (learned.settled || 0)) store.set(learnedKey(), incoming.learned);
+
+  state.analysisCache = {};
+}
+
+function exportMyData() {
+  const blob = new Blob([JSON.stringify(collectMyData(), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `predictor-backup-${fmtDateISO(new Date())}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('⬇️ اتحملت نسخة من بياناتك — خزنها أو افتحها على جهاز تاني');
+}
+
+function importMyData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.onchange = () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        mergeMyData(JSON.parse(reader.result));
+        toast('✅ البيانات اتدمجت مع اللي عندك');
+        renderSlips();
+      } catch (e) { toast('❌ الملف ده مش نسخة صالحة: ' + e.message); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+async function cloudUpload() {
+  if (!window.DATA_KEY) { toast('سجل خروج وادخل تاني الأول عشان مفتاح التشفير يتجهز'); return; }
+  const key = await dataCryptoKey(['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(collectMyData()))));
+  const buf = new Uint8Array(12 + ct.length); buf.set(iv); buf.set(ct, 12);
+  let b64 = ''; for (let i = 0; i < buf.length; i += 0x8000) b64 += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  const payload = JSON.stringify({ enc: btoa(b64), updatedAt: new Date().toISOString() });
+  try {
+    await ghPutFile(`${SYNC_DIR}/${syncId()}.json`, payload, 'مزامنة بيانات مستخدم');
+    toast('☁️ اترفعت — أي جهاز هيدخل بنفس الباسورد يقدر ينزلها بعد دقيقة');
+  } catch (e) { toast('❌ فشل الرفع: ' + e.message); }
+}
+
+async function cloudDownload() {
+  if (!window.DATA_KEY) { toast('سجل خروج وادخل تاني الأول عشان مفتاح التشفير يتجهز'); return; }
+  try {
+    const res = await fetch(`sync/${syncId()}.json?ts=${Date.now()}`);
+    if (res.status === 404) { toast('مفيش نسخة مرفوعة لحسابك لسه — ارفع من الجهاز الأساسي الأول'); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const { enc } = await res.json();
+    const buf = Uint8Array.from(atob(enc), c => c.charCodeAt(0));
+    const key = await dataCryptoKey(['decrypt']);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
+    mergeMyData(JSON.parse(new TextDecoder().decode(pt)));
+    toast('✅ آخر نسخة اتدمجت مع بيانات الجهاز ده');
+    renderSlips();
+  } catch (e) { toast('❌ فشل التنزيل: ' + e.message); }
+}
+
 // ---------- صفحة الإدارة (للأدمن بس) ----------
 const GH_OWNER = 'abanoub-maged145';
 const GH_REPO = 'predictions';
 const GH_CONFIG_PATH = 'docs/config.js';
-const GH_TOKEN_KEY = 'predictor_gh_token';
+const GH_TOKEN_KEY = 'predictor_gh_token';          // النسخة القديمة (غير مشفرة) — بتترحّل تلقائياً
+const GH_TOKEN_ENC_KEY = 'predictor_gh_token_enc';  // المفتاح مشفر بمفتاح الأدمن
+const PBKDF2_ITER = 310000;
 
 const sha256Text = async text => {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 };
+
+// بصمة PBKDF2 — بطيئة عمداً عشان تخمين الباسوردات من البصمات المنشورة يبقى شبه مستحيل
+async function pbkdf2Text(password, saltB64, iter = PBKDF2_ITER) {
+  const salt = Uint8Array.from(atob(saltB64), c => c.charCodeAt(0));
+  const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter }, keyMat, 256);
+  return [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+const newSaltB64 = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+
+// مفتاح GitHub: بنقرأه مشفر لو متوفر مفتاح الأدمن، أو النسخة القديمة غير المشفرة
+async function getGhToken() {
+  const enc = localStorage.getItem(GH_TOKEN_ENC_KEY);
+  if (enc) {
+    const plain = await decryptPass(enc);
+    if (plain) return plain;
+  }
+  return localStorage.getItem(GH_TOKEN_KEY);
+}
+
+// رفع/تحديث ملف في الريبو عبر GitHub API (بيستخدمه نشر الإعدادات والمزامنة)
+async function ghPutFile(path, content, message) {
+  const token = await getGhToken();
+  if (!token) throw new Error('مفيش مفتاح GitHub محفوظ — اربط GitHub من صفحة الإدارة الأول');
+  const api = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`;
+  const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' };
+
+  let sha;
+  const cur = await fetch(api, { headers });
+  if (cur.ok) sha = (await cur.json()).sha;
+  else if (cur.status !== 404) throw new Error('HTTP ' + cur.status);
+
+  const b64 = btoa(unescape(encodeURIComponent(content)));
+  const res = await fetch(api, {
+    method: 'PUT', headers,
+    body: JSON.stringify({ message, content: b64, ...(sha ? { sha } : {}) }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
 
 // أدوات باسوردات المستخدمين
 const fmtD = iso => iso ? new Date(iso).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
@@ -974,8 +1243,17 @@ async function decryptPass(enc) {
 
 function renderAdmin() {
   const area = $('#admin-area');
-  const hasToken = !!localStorage.getItem(GH_TOKEN_KEY);
+  const hasToken = !!(localStorage.getItem(GH_TOKEN_KEY) || localStorage.getItem(GH_TOKEN_ENC_KEY));
+
+  // ترحيل المفتاح القديم غير المشفر → نسخة مشفرة بمفتاح الأدمن
+  const legacyToken = localStorage.getItem(GH_TOKEN_KEY);
+  if (legacyToken) {
+    encryptPass(legacyToken).then(enc => {
+      if (enc) { localStorage.setItem(GH_TOKEN_ENC_KEY, enc); localStorage.removeItem(GH_TOKEN_KEY); }
+    });
+  }
   const passes = window.USER_PASSES || [];
+  const needsUpgrade = !window.ADMIN_SALT || passes.some(p => !p.salt);
   const expiredCount = passes.filter(passExpired).length;
   const editing = adminEditIndex != null ? passes[adminEditIndex] : null;
 
@@ -1046,6 +1324,18 @@ function renderAdmin() {
       <p id="admin-token-status" class="pillar-note"></p>
     </div>
 
+    ${needsUpgrade ? `
+    <div class="slip-box">
+      <div class="slip-head"><h3>🛡️ ترقية الحماية</h3></div>
+      <p class="pillar-note" style="margin-bottom:12px">
+        في بصمات باسوردات لسه منشورة بالصيغة القديمة (SHA-256 السريعة) — واللي ممكن نظرياً تتخمن من الملف العام لو الباسورد ضعيف.
+        الترقية بتعيد نشرها بصيغة <b>PBKDF2</b> (310 ألف تكرار) اللي بتخلي التخمين أبطأ بمئات آلاف المرات.<br>
+        <b>خد بالك:</b> بعد الترقية كل المستخدمين هيسجلوا دخول من جديد بنفس باسورداتهم — بياناتهم مش هتتأثر.
+      </p>
+      <button id="admin-upgrade-security" class="primary-btn" ${hasToken ? '' : 'disabled title="اربط GitHub الأول من تحت"'}>🛡️ رقّي البصمات وانشر</button>
+      <p id="admin-upgrade-status" class="pillar-note"></p>
+    </div>` : ''}
+
     <div class="slip-box">
       <div class="slip-head"><h3>ℹ️ ملاحظات</h3></div>
       <p class="pillar-note">
@@ -1067,16 +1357,18 @@ function renderAdmin() {
     });
   }
 
-  $('#admin-token-form').onsubmit = e => {
+  $('#admin-token-form').onsubmit = async e => {
     e.preventDefault();
     const val = $('#admin-token').value.trim();
     if (!val) return;
-    localStorage.setItem(GH_TOKEN_KEY, val);
-    toast('✅ المفتاح اتحفظ على الجهاز ده');
+    const encTok = await encryptPass(val);
+    if (encTok) { localStorage.setItem(GH_TOKEN_ENC_KEY, encTok); localStorage.removeItem(GH_TOKEN_KEY); }
+    else localStorage.setItem(GH_TOKEN_KEY, val); // مفيش مفتاح أدمن في الجلسة — هيتشفر أول ما تدخل تاني
+    toast('✅ المفتاح اتحفظ على الجهاز ده' + (encTok ? ' (مشفر)' : ''));
     renderAdmin();
   };
   const clearBtn = $('#admin-token-clear');
-  if (clearBtn) clearBtn.onclick = () => { localStorage.removeItem(GH_TOKEN_KEY); toast('اتمسح المفتاح'); renderAdmin(); };
+  if (clearBtn) clearBtn.onclick = () => { localStorage.removeItem(GH_TOKEN_KEY); localStorage.removeItem(GH_TOKEN_ENC_KEY); toast('اتمسح المفتاح'); renderAdmin(); };
 
   // تعديل / حذف / مسح المنتهية
   area.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => { adminEditIndex = +b.dataset.edit; renderAdmin(); });
@@ -1091,6 +1383,46 @@ function renderAdmin() {
   const cancelBtn = $('#admin-edit-cancel');
   if (cancelBtn) cancelBtn.onclick = () => { adminEditIndex = null; renderAdmin(); };
 
+  // ترقية بصمات الباسوردات القديمة لـ PBKDF2
+  const upgradeBtn = $('#admin-upgrade-security');
+  if (upgradeBtn) upgradeBtn.onclick = async () => {
+    if (!confirm('الترقية هتعيد نشر البصمات بصيغة أقوى، وكل المستخدمين هيسجلوا دخول من جديد بنفس باسورداتهم. نكمل؟')) return;
+    const st = $('#admin-upgrade-status');
+    upgradeBtn.disabled = true;
+    st.textContent = '⏳ بجهز البصمات الجديدة…';
+
+    const next = [];
+    let skipped = 0;
+    for (const p of passes) {
+      if (p.salt) { next.push(p); continue; }
+      const plain = await decryptPass(p.enc);
+      if (!plain) { next.push(p); skipped++; continue; } // مش معروف نصه — بيفضل بالصيغة القديمة
+      const salt = newSaltB64();
+      next.push({ ...p, hash: await pbkdf2Text(plain, salt), salt, iter: PBKDF2_ITER });
+    }
+
+    let adminOverride = null;
+    if (!window.ADMIN_SALT) {
+      try { adminOverride = JSON.parse(sessionStorage.getItem('predictor_admin_upgrade')); } catch { adminOverride = null; }
+      if (!adminOverride) {
+        st.textContent = '⚠️ بصمة الأدمن الجديدة مش جاهزة في الجلسة دي — سجل خروج وادخل تاني وبعدين دوس الزرار ده';
+        upgradeBtn.disabled = false;
+        return;
+      }
+    }
+
+    try {
+      await publishConfig(next, 'ترقية الحماية لبصمات PBKDF2', adminOverride);
+      sessionStorage.removeItem('predictor_admin_upgrade');
+      toast('🛡️ اترقّت الحماية — هتشتغل على الموقع خلال دقيقة');
+      if (skipped) alert(`ملحوظة: ${skipped} باسورد مش متسجل نصه المشفر فمعرفناش نرقّيه — عدّله واكتب كلمة السر تاني من الفورم وهيترقّى تلقائياً.`);
+      renderAdmin();
+    } catch (err) {
+      st.textContent = '❌ فشل النشر: ' + err.message;
+      upgradeBtn.disabled = false;
+    }
+  };
+
   // إضافة أو تعديل
   $('#admin-pass-form').onsubmit = async e => {
     e.preventDefault();
@@ -1102,13 +1434,28 @@ function renderAdmin() {
     if (!editing && !passVal) { status.textContent = '⚠️ اكتب كلمة السر'; return; }
     if (passVal && passVal.length < 4) { status.textContent = '⚠️ قصيرة أوي — 4 حروف على الأقل'; return; }
 
-    const hash = passVal ? await sha256Text(passVal) : editing.hash;
-    if (hash === window.ADMIN_HASH) { status.textContent = '⚠️ دي كلمة سر الأدمن — اختار كلمة تانية'; return; }
-    const clash = passes.some((p, i) => p.hash === hash && i !== adminEditIndex);
-    if (clash) { status.textContent = '⚠️ كلمة السر دي مستخدمة لباسورد تاني في القايمة'; return; }
+    let hash = editing?.hash, salt = editing?.salt ?? null, iter = editing?.iter ?? null;
+    if (passVal) {
+      status.textContent = '⏳ بجهز البصمة…';
+      // اتأكد إنها مش كلمة سر الأدمن ولا باسورد تاني (البصمات مختلفة الـ salt فلازم نشتق لكل واحدة)
+      const legacy = await sha256Text(passVal);
+      const isAdmin = window.ADMIN_SALT
+        ? (await pbkdf2Text(passVal, window.ADMIN_SALT, window.ADMIN_ITER || PBKDF2_ITER)) === window.ADMIN_HASH
+        : legacy === window.ADMIN_HASH;
+      if (isAdmin) { status.textContent = '⚠️ دي كلمة سر الأدمن — اختار كلمة تانية'; return; }
+      for (let i = 0; i < passes.length; i++) {
+        if (i === adminEditIndex) continue;
+        const p = passes[i];
+        const h = p.salt ? await pbkdf2Text(passVal, p.salt, p.iter || PBKDF2_ITER) : legacy;
+        if (h === p.hash) { status.textContent = '⚠️ كلمة السر دي مستخدمة لباسورد تاني في القايمة'; return; }
+      }
+      salt = newSaltB64();
+      iter = PBKDF2_ITER;
+      hash = await pbkdf2Text(passVal, salt, iter);
+    }
 
     const entry = {
-      hash,
+      hash, salt, iter,
       label,
       created: editing ? editing.created : new Date().toISOString(),
       expires: days ? new Date(Date.now() + (+days) * 24 * 3600 * 1000).toISOString() : null,
@@ -1136,31 +1483,29 @@ function renderAdmin() {
 }
 
 // نشر إعدادات الباسوردات على GitHub (بيحدّث docs/config.js في الريبو)
-async function publishConfig(newPasses, actionLabel) {
-  const token = localStorage.getItem(GH_TOKEN_KEY);
-  if (!token) throw new Error('مفيش مفتاح GitHub محفوظ — اربط GitHub الأول');
-  const api = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_CONFIG_PATH}`;
-  const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' };
-
-  const cur = await fetch(api, { headers });
-  if (!cur.ok) throw new Error('HTTP ' + cur.status);
-  const curData = await cur.json();
-
+// adminOverride: {hash, salt, iter} لو بنرقّي بصمة الأدمن نفسها لـ PBKDF2
+async function publishConfig(newPasses, actionLabel, adminOverride = null) {
+  const admin = adminOverride || { hash: window.ADMIN_HASH, salt: window.ADMIN_SALT || null, iter: window.ADMIN_ITER || null };
   const content = [
-    '// إعدادات كلمات السر (مخزنة كبصمات SHA-256)',
+    '// إعدادات كلمات السر (بصمات PBKDF2 — والقديمة SHA-256 لحد ما تترقّى)',
     '// ADMIN_HASH: كلمة سر الأدمن — USER_PASSES: باسوردات المستخدمين (كل واحد باسم ومدة صلاحية)',
-    `window.ADMIN_HASH = '${window.ADMIN_HASH}';`,
+    `window.ADMIN_HASH = '${admin.hash}';`,
+    ...(admin.salt ? [`window.ADMIN_SALT = '${admin.salt}';`, `window.ADMIN_ITER = ${admin.iter || PBKDF2_ITER};`] : []),
     `window.USER_PASSES = ${JSON.stringify(newPasses, null, 2)};`,
     '',
   ].join('\n');
-  const b64 = btoa(unescape(encodeURIComponent(content)));
-
-  const res = await fetch(api, {
-    method: 'PUT', headers,
-    body: JSON.stringify({ message: `${actionLabel} — من صفحة الإدارة`, content: b64, sha: curData.sha }),
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
+  await ghPutFile(GH_CONFIG_PATH, content, `${actionLabel} — من صفحة الإدارة`);
   window.USER_PASSES = newPasses;
+  if (adminOverride) {
+    window.ADMIN_HASH = adminOverride.hash;
+    window.ADMIN_SALT = adminOverride.salt;
+    window.ADMIN_ITER = adminOverride.iter;
+    // نحدّث الجلسة الحالية عشان الأدمن ميتطردش بعد الترقية
+    try {
+      const s = JSON.parse(sessionStorage.getItem('predictor_auth_v1'));
+      if (s) { s.a = adminOverride.hash; sessionStorage.setItem('predictor_auth_v1', JSON.stringify(s)); window.AUTH_HASH = adminOverride.hash; }
+    } catch { /* جلسة قديمة — هيسجل دخول تاني */ }
+  }
 }
 
 function updateAdminNav() {
@@ -1225,6 +1570,9 @@ function renderDateChips() {
 document.addEventListener('DOMContentLoaded', () => {
   $('#date-input').onchange = e => { const [y, mo, da] = e.target.value.split('-').map(Number); if (y) setDate(new Date(y, mo - 1, da)); };
   $('#btn-top-picks').onclick = analyzeAll;
+  $('#btn-value-picks').onclick = showValuePicks;
+  // PWA: الموقع يتسطب كتطبيق ويفتح حتى لو النت فاصل (آخر نسخة متخزنة)
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { /* مش متاح */ });
   document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchView(b.dataset.view));
   $('#modal-close').onclick = () => $('#modal').classList.add('hidden');
   $('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); };

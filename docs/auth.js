@@ -50,6 +50,11 @@
         sessionStorage.setItem(KEY, hash);
         window.AUTH_ROLE = role;
         window.AUTH_HASH = hash;
+        if (role === 'admin') {
+          // مفتاح فك تشفير باسوردات المستخدمين — مشتق من كلمة سر الأدمن نفسها
+          const keyRaw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('predictor-key:' + val));
+          sessionStorage.setItem('predictor_admin_key', btoa(String.fromCharCode(...new Uint8Array(keyRaw))));
+        }
         overlay.remove();
         document.documentElement.classList.remove('locked');
         document.dispatchEvent(new CustomEvent('predictor-authed'));

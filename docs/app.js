@@ -946,6 +946,32 @@ const fmtD = iso => iso ? new Date(iso).toLocaleDateString('ar-EG', { day: 'nume
 const passExpired = p => !!p.expires && Date.parse(p.expires) <= Date.now();
 let adminEditIndex = null; // مؤشر الباسورد اللي بيتعدل حالياً
 
+// تشفير/فك تشفير الباسورد بمفتاح مشتق من كلمة سر الأدمن —
+// بيتخزن مشفر في الريبو العام ومحدش يفكه غير اللي معاه كلمة سر الأدمن
+async function adminCryptoKey(usages) {
+  const b64 = sessionStorage.getItem('predictor_admin_key');
+  if (!b64) return null;
+  const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, usages);
+}
+async function encryptPass(plain) {
+  const key = await adminCryptoKey(['encrypt']);
+  if (!key) return null;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+  const buf = new Uint8Array(12 + ct.length); buf.set(iv); buf.set(ct, 12);
+  return btoa(String.fromCharCode(...buf));
+}
+async function decryptPass(enc) {
+  try {
+    const key = await adminCryptoKey(['decrypt']);
+    if (!key || !enc) return null;
+    const buf = Uint8Array.from(atob(enc), c => c.charCodeAt(0));
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
+    return new TextDecoder().decode(pt);
+  } catch { return null; }
+}
+
 function renderAdmin() {
   const area = $('#admin-area');
   const hasToken = !!localStorage.getItem(GH_TOKEN_KEY);
@@ -980,6 +1006,7 @@ function renderAdmin() {
       <div class="slip-items">${rows}</div>
       <hr style="border-color:var(--border); margin:16px 0; border-style:solid; border-width:1px 0 0">
       <h4 style="margin-bottom:10px">${editing ? `✏️ تعديل باسورد «${escapeHtml(editing.label || 'مستخدم')}»` : '➕ إضافة باسورد جديد'}</h4>
+      ${editing ? '<p id="admin-current-pass" class="pillar-note" style="margin-bottom:10px">⏳ بجيب الباسورد الحالي…</p>' : ''}
       <form id="admin-pass-form" class="admin-form">
         <input type="text" id="admin-pass-label" placeholder="اسم صاحب الباسورد (مثلاً: أحمد)" value="${editing ? escapeHtml(editing.label || '') : ''}">
         <input type="password" id="admin-pass-value" placeholder="${editing ? 'كلمة السر — سيبها فاضية لو مش عايز تغيّرها' : 'كلمة السر'}" autocomplete="new-password">
@@ -1022,12 +1049,23 @@ function renderAdmin() {
     <div class="slip-box">
       <div class="slip-head"><h3>ℹ️ ملاحظات</h3></div>
       <p class="pillar-note">
-        · كلمة سر <b>الأدمن</b> بتتغير من الكمبيوتر بس (بسكريبت change-password.ps1 -Admin أو عن طريق كلود) — للأمان.<br>
+        · كلمة سر <b>الأدمن</b> بتتغير من الكمبيوتر بس (بسكريبت change-password.ps1 أو عن طريق كلود) — للأمان.<br>
         · أي تغيير بياخد حوالي دقيقة عشان يوصل الموقع بعد النشر.<br>
-        · كلمة السر نفسها مش بتتعرض هنا (بتتخزن كبصمة مشفرة) — الاسم اللي بتكتبه هو اللي بيفكرك مين معاه إيه.
+        · الباسوردات بتتخزن <b>مشفرة بمفتاح مشتق من كلمة سر الأدمن</b> — عشان كده بتظهرلك في التعديل وأنت بس اللي تقدر تشوفها.<br>
+        · <b>مهم:</b> لو غيّرت كلمة سر الأدمن، الباسوردات المحفوظة هتفضل شغالة عادي، بس مش هتظهر في التعديل تاني غير لما تكتبها من جديد وتحفظها.
       </p>
     </div>
   `;
+
+  // عرض الباسورد الحالي في وضع التعديل (بعد فك تشفيره بمفتاح الأدمن)
+  if (editing) {
+    decryptPass(editing.enc).then(plain => {
+      const elp = $('#admin-current-pass');
+      if (!elp) return;
+      if (plain) elp.innerHTML = `🔍 الباسورد الحالي: <b style="color:var(--gold); font-size:15px; letter-spacing:1px">${escapeHtml(plain)}</b> — سيب خانة كلمة السر فاضية لو مش عايز تغيّره`;
+      else elp.innerHTML = '🔒 الباسورد ده متسجل من قبل ميزة العرض — لو عايز تشوفه بعد كده، اكتبه تاني في خانة كلمة السر واحفظ (أو سجل خروج وادخل تاني لو فاتح من جلسة قديمة)';
+    });
+  }
 
   $('#admin-token-form').onsubmit = e => {
     e.preventDefault();
@@ -1074,6 +1112,7 @@ function renderAdmin() {
       label,
       created: editing ? editing.created : new Date().toISOString(),
       expires: days ? new Date(Date.now() + (+days) * 24 * 3600 * 1000).toISOString() : null,
+      enc: passVal ? await encryptPass(passVal) : (editing ? editing.enc ?? null : null),
     };
     const next = [...passes];
     if (editing) next[adminEditIndex] = entry; else next.push(entry);
@@ -1130,6 +1169,7 @@ function updateAdminNav() {
 
 function logout() {
   sessionStorage.removeItem('predictor_auth_v1');
+  sessionStorage.removeItem('predictor_admin_key');
   location.reload(); // هيرجع لشاشة القفل
 }
 

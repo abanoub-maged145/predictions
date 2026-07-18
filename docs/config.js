@@ -6,6 +6,7 @@ window.USER_PASSES = [
     "hash": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
     "label": "الباسورد الأساسي",
     "created": "2026-07-18T00:00:00.000Z",
-    "expires": null
+    "expires": null,
+    "enc": "Ooz592dg5KIAabyRyffPC3FAlm/Zoctyt64AKBEiXWE="
   }
 ];

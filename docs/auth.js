@@ -13,8 +13,8 @@
     (window.USER_PASSES || []).some(p => p.hash === h && (!p.expires || Date.parse(p.expires) > Date.now()));
 
   const saved = sessionStorage.getItem(KEY);
-  if (saved === window.ADMIN_HASH) { window.AUTH_ROLE = 'admin'; return; }
-  if (validUserHash(saved)) { window.AUTH_ROLE = 'user'; return; }
+  if (saved === window.ADMIN_HASH) { window.AUTH_ROLE = 'admin'; window.AUTH_HASH = saved; return; }
+  if (validUserHash(saved)) { window.AUTH_ROLE = 'user'; window.AUTH_HASH = saved; return; }
 
   localStorage.removeItem(KEY); // تنضيف جلسات النسخ القديمة
   document.documentElement.classList.add('locked');
@@ -49,6 +49,7 @@
       if (role) {
         sessionStorage.setItem(KEY, hash);
         window.AUTH_ROLE = role;
+        window.AUTH_HASH = hash;
         overlay.remove();
         document.documentElement.classList.remove('locked');
         document.dispatchEvent(new CustomEvent('predictor-authed'));

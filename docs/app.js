@@ -67,14 +67,27 @@ const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, val) { localStorage.setItem(key, JSON.stringify(val)); },
 };
-const SLIPS_KEY = 'predictor_slips_v1';
-const AUTOLOG_KEY = 'predictor_autolog_v1';
-const LEARNED_KEY = 'predictor_learned_v1';
-const STANDINGS_KEY = 'predictor_standings_v1';
+const STANDINGS_KEY = 'predictor_standings_v1'; // كاش عام مشترك — مجرد بيانات ترتيب
 
-const loadSlips = () => store.get(SLIPS_KEY, []);
-const saveSlips = s => store.set(SLIPS_KEY, s);
-const loadLearned = () => store.get(LEARNED_KEY, { weights: null, buckets: {}, pillars: {}, settled: 0 });
+// كل مستخدم ليه مساحة تخزين خاصة ببصمة الباسورد بتاعه — نشاط حد مش بيظهر لحد تاني
+const nsKey = base => `${base}_${(window.AUTH_HASH || 'anon').slice(0, 10)}`;
+const slipsKey = () => nsKey('predictor_slips_v1');
+const autologKey = () => nsKey('predictor_autolog_v1');
+const learnedKey = () => nsKey('predictor_learned_v1');
+
+const loadSlips = () => store.get(slipsKey(), []);
+const saveSlips = s => store.set(slipsKey(), s);
+const loadLearned = () => store.get(learnedKey(), { weights: null, buckets: {}, pillars: {}, settled: 0 });
+
+// ترحيل بيانات النسخة القديمة (قبل الفصل بين المستخدمين) لحساب الأدمن — مرة واحدة
+function migrateLegacyStorage() {
+  if (window.AUTH_ROLE !== 'admin') return;
+  for (const base of ['predictor_slips_v1', 'predictor_autolog_v1', 'predictor_learned_v1']) {
+    const legacy = localStorage.getItem(base);
+    if (legacy && !localStorage.getItem(nsKey(base))) localStorage.setItem(nsKey(base), legacy);
+    if (legacy) localStorage.removeItem(base);
+  }
+}
 
 // معاملات المعايرة من سجل الدقة: لو ثقة 80% بتصيب 65% فعلاً → نزّلها
 function calibFactors() {
@@ -220,7 +233,7 @@ async function loadLeagueFixtures(code) {
 
 // فهرس آخر التحليلات المحفوظة عشان الكروت تفتكرها بعد قفل الصفحة
 function refreshAutologIndex() {
-  state.autologByEvent = Object.fromEntries(store.get(AUTOLOG_KEY, []).map(r => [r.id, r]));
+  state.autologByEvent = Object.fromEntries(store.get(autologKey(), []).map(r => [r.id, r]));
 }
 
 function renderLeagueMatches() {
@@ -412,7 +425,7 @@ async function getAnalysis(m, { withOverlap = true } = {}) {
 }
 
 function autolog(m, a) {
-  const log = store.get(AUTOLOG_KEY, []);
+  const log = store.get(autologKey(), []);
   const idx = log.findIndex(x => x.id === m.id);
   const rec = {
     id: m.id, league: m.league, kickoff: m.date,
@@ -428,7 +441,7 @@ function autolog(m, a) {
     const i = log.findIndex(x => x.status !== 'pending');
     log.splice(i >= 0 ? i : 0, 1);
   }
-  store.set(AUTOLOG_KEY, log);
+  store.set(autologKey(), log);
 }
 
 // مؤشر تطابق اللاعيبة
@@ -802,7 +815,7 @@ async function refreshResults() {
 // ---------- صفحة الدقة والتعلم الذاتي ----------
 function renderStats() {
   const area = $('#stats-area');
-  const log = store.get(AUTOLOG_KEY, []);
+  const log = store.get(autologKey(), []);
   const learned = loadLearned();
   const settledLogs = log.filter(x => x.status === 'settled');
 
@@ -858,7 +871,7 @@ async function learnFromResults() {
   const btn = $('#btn-learn');
   btn.disabled = true; btn.textContent = '⏳ بجيب النتائج وبتعلم…';
 
-  const log = store.get(AUTOLOG_KEY, []);
+  const log = store.get(autologKey(), []);
   const pending = log.filter(x => x.status === 'pending' && new Date(x.kickoff).getTime() < Date.now() - 2 * 3600 * 1000);
   const eventScores = await fetchScores(pending);
 
@@ -910,8 +923,8 @@ async function learnFromResults() {
     };
   }
 
-  store.set(AUTOLOG_KEY, log);
-  store.set(LEARNED_KEY, learned);
+  store.set(autologKey(), log);
+  store.set(learnedKey(), learned);
   state.analysisCache = {}; // التحليلات الجاية هتستخدم الأوزان والمعايرة الجديدة
   renderStats();
   toast(newly ? `🧠 النظام اتعلم من ${newly} ماتش جديد` : 'مفيش ماتشات جديدة خلصت لسه');
@@ -1176,7 +1189,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#modal-close').onclick = () => $('#modal').classList.add('hidden');
   $('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); };
   updateAdminNav();
-  document.addEventListener('predictor-authed', updateAdminNav);
+  migrateLegacyStorage();
+  document.addEventListener('predictor-authed', () => { updateAdminNav(); migrateLegacyStorage(); });
   $('#nav-logout').onclick = logout;
   setDate(new Date());
 });

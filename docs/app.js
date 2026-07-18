@@ -178,7 +178,7 @@ const EloDB = {
   },
   recordBatch(list) {
     let n = 0;
-    for (const m of list) if (m.state === 'post' && this.record(m)) n++;
+    for (const m of list) if (m.state === 'post' && m.finished !== false && this.record(m)) n++;
     if (n) this.save();
     return n;
   },
@@ -233,6 +233,16 @@ async function loadMatches() {
 // بطولات بتتلعب على ملاعب محايدة — مفيش ميزة أرض حتى لو البيانات سجلت "صاحب أرض" شكلي
 const NEUTRAL_LEAGUES = new Set(['fifa.world', 'uefa.euro', 'conmebol.america', 'caf.nations']);
 
+// الماتش خلص تماماً؟ مش كفاية حالة "post" — ساعات ESPN بيعلّمها عند نهاية
+// الوقت الأصلي والماتش رايح لوقت إضافي/ضربات جزاء، أو الماتش يكون مؤجل/ملغي.
+// النتيجة متتعتمدش (للتعلم أو المجموعات) غير لما تكون نهائية فعلاً.
+function isFinal(statusType) {
+  if (!statusType) return false;
+  if (statusType.state !== 'post') return false;
+  if (statusType.completed === false) return false;
+  return !/POSTPONED|CANCEL|ABANDON|SUSPEND|DELAY/i.test(statusType.name || '');
+}
+
 function toMatch(ev, leagueCode) {
   const comp = ev.competitions?.[0];
   if (!comp) return null;
@@ -245,6 +255,7 @@ function toMatch(ev, leagueCode) {
     leagueName: LEAGUE_NAME[leagueCode] || leagueCode,
     date: ev.date,
     state: ev.status?.type?.state || 'pre',
+    finished: isFinal(ev.status?.type),
     statusText: ev.status?.type?.shortDetail || '',
     neutralSite: !!comp.neutralSite || NEUTRAL_LEAGUES.has(leagueCode),
     home: { id: home.id, name: home.team?.displayName, logo: home.team?.logo, score: home.score },
@@ -911,11 +922,13 @@ async function fetchScores(items) {
     }
   }
   const eventScores = {};
+  const okDays = new Set(); // الأيام اللي اتجابت بنجاح — عشان نفرق بين "الماتش مخلصش" و"الطلب فشل"
   await Promise.all([...need.values()].map(async ({ league, dk }) => {
     try {
       const data = await fetchJSON(`${API}/${league}/scoreboard?dates=${dk}`, { cache: false });
+      okDays.add(`${league}|${dk}`);
       for (const ev of (data.events || [])) {
-        if (ev.status?.type?.state !== 'post') continue;
+        if (!isFinal(ev.status?.type)) continue; // منتهي تماماً — مش واقف على وقت إضافي ولا مؤجل
         const comp = ev.competitions?.[0];
         const home = comp?.competitors?.find(c => c.homeAway === 'home');
         const away = comp?.competitors?.find(c => c.homeAway === 'away');
@@ -923,19 +936,46 @@ async function fetchScores(items) {
       }
     } catch { /* تجاهل */ }
   }));
-  return eventScores;
+  return { eventScores, okDays };
 }
+
+// اتحسب قبل ما الماتش يخلص فعلاً؟ (اتجاب يومه بنجاح ومع ذلك مفيش نتيجة نهائية ليه)
+const wronglySettled = (it, eventScores, okDays) =>
+  Date.now() - new Date(it.kickoff).getTime() < 12 * 3600 * 1000 &&
+  !eventScores[it.eventId ?? it.id] &&
+  okDays.has(`${it.league}|${fmtDateKey(new Date(it.kickoff))}`);
 
 async function refreshResults() {
   const btn = $('#btn-refresh-results');
   btn.disabled = true; btn.textContent = '⏳ بجيب النتائج…';
   const slips = loadSlips();
-  const pending = slips.flatMap(s => s.items).filter(i => i.status === 'pending' && new Date(i.kickoff).getTime() < Date.now() - 2 * 3600 * 1000);
-  const eventScores = await fetchScores(pending);
+  const allItems = slips.flatMap(s => s.items);
+  const pending = allItems.filter(i => i.status === 'pending' && new Date(i.kickoff).getTime() < Date.now() - 2 * 3600 * 1000);
+  // التوقعات اللي اتحسبت في آخر 12 ساعة بتتراجع تاني — يمكن كانت اتعتمدت والماتش لسه شغال
+  const recent = allItems.filter(i => (i.status === 'won' || i.status === 'lost') && Date.now() - new Date(i.kickoff).getTime() < 12 * 3600 * 1000);
+  const { eventScores, okDays } = await fetchScores([...pending, ...recent]);
 
-  let updated = 0;
+  let updated = 0, reverted = 0;
   for (const slip of slips) {
     for (const it of slip.items) {
+      if (it.status === 'won' || it.status === 'lost') {
+        if (wronglySettled(it, eventScores, okDays)) {
+          // اتحسب والماتش لسه شغال — يرجع منتظر لحد ما يخلص بجد
+          it.status = 'pending';
+          it.finalScore = null;
+          reverted++;
+          continue;
+        }
+        // الماتش خلص بنتيجة نهائية مختلفة عن اللي اتسجلت بدري؟ نصححها
+        const fin = eventScores[it.eventId];
+        if (fin && !isNaN(fin.h) && `${fin.h}-${fin.a}` !== it.finalScore) {
+          const ok2 = Engine.evaluatePick(it, fin.h, fin.a);
+          it.status = ok2 === null ? 'void' : ok2 ? 'won' : 'lost';
+          it.finalScore = `${fin.h}-${fin.a}`;
+          updated++;
+          continue;
+        }
+      }
       if (it.status !== 'pending') continue;
       const sc = eventScores[it.eventId];
       if (!sc || isNaN(sc.h) || isNaN(sc.a)) continue;
@@ -947,7 +987,7 @@ async function refreshResults() {
   }
   saveSlips(slips);
   renderSlips();
-  toast(updated ? `✅ اتحدثت نتايج ${updated} توقع` : 'مفيش نتايج جديدة لسه');
+  toast(updated || reverted ? `✅ اتحدثت نتايج ${updated} توقع${reverted ? ` ورجعنا ${reverted} كانوا اتحسبوا قبل نهاية الماتش` : ''}` : 'مفيش نتايج جديدة لسه');
 }
 
 // ---------- صفحة الدقة والتعلم الذاتي ----------
@@ -1058,10 +1098,19 @@ async function learnFromResults() {
 
   const log = store.get(autologKey(), []);
   const pending = log.filter(x => x.status === 'pending' && new Date(x.kickoff).getTime() < Date.now() - 2 * 3600 * 1000);
-  const eventScores = await fetchScores(pending);
+  // السجلات اللي اتحسبت في آخر 12 ساعة بتتراجع — يمكن الماتش كان لسه شغال وقتها
+  const recent = log.filter(x => x.status === 'settled' && Date.now() - new Date(x.kickoff).getTime() < 12 * 3600 * 1000);
+  const { eventScores, okDays } = await fetchScores([...pending, ...recent]);
 
   const learned = loadLearned();
   let newly = 0;
+  for (const rec of recent) {
+    if (wronglySettled(rec, eventScores, okDays)) { rec.status = 'pending'; rec.score = null; }
+    else {
+      const fin = eventScores[rec.id];
+      if (fin && !isNaN(fin.h)) rec.score = `${fin.h}-${fin.a}`; // تصحيح النتيجة المعروضة لو اتسجلت قبل النهاية
+    }
+  }
   for (const rec of log) {
     if (rec.status !== 'pending') continue;
     const sc = eventScores[rec.id];

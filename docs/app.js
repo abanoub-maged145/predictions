@@ -928,22 +928,61 @@ const sha256Text = async text => {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
+// أدوات باسوردات المستخدمين
+const fmtD = iso => iso ? new Date(iso).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+const passExpired = p => !!p.expires && Date.parse(p.expires) <= Date.now();
+let adminEditIndex = null; // مؤشر الباسورد اللي بيتعدل حالياً
+
 function renderAdmin() {
   const area = $('#admin-area');
   const hasToken = !!localStorage.getItem(GH_TOKEN_KEY);
+  const passes = window.USER_PASSES || [];
+  const expiredCount = passes.filter(passExpired).length;
+  const editing = adminEditIndex != null ? passes[adminEditIndex] : null;
+
+  const rows = passes.map((p, i) => {
+    const expired = passExpired(p);
+    return `
+      <div class="slip-item ${expired ? 'st-lost' : ''}">
+        <span class="si-status">${expired ? '⛔' : '🔑'}</span>
+        <div class="si-info">
+          <b>${escapeHtml(p.label || 'مستخدم')}</b>
+          <span>بداية: ${fmtD(p.created) || '—'} · ${p.expires ? `تنتهي: ${fmtD(p.expires)}` : 'من غير انتهاء'}${expired ? ' · <b style="color:var(--red)">منتهية — مش بتفتح</b>' : ''}</span>
+        </div>
+        <button class="save-btn" data-edit="${i}">✏️ تعديل</button>
+        <button class="si-del" data-del="${i}" title="حذف">✕</button>
+      </div>`;
+  }).join('') || '<p class="pillar-note">مفيش باسوردات مستخدمين — ضيف واحد من الفورم تحت.</p>';
+
   area.innerHTML = `
     <div class="slip-box">
-      <div class="slip-head"><h3>🔑 كلمة سر المستخدمين العاديين</h3></div>
-      <p class="pillar-note" style="margin-bottom:12px">
-        دي الكلمة اللي بيدخل بيها أي حد غيرك. لما تغيّرها وتنشر،
-        <b>كل المستخدمين هيتسجل خروجهم تلقائياً</b> وهيحتاجوا الكلمة الجديدة.
-        كلمة سر الأدمن بتاعتك مش بتتأثر.
+      <div class="slip-head">
+        <h3>🔑 باسوردات المستخدمين (${passes.length - expiredCount} سارية${expiredCount ? ` · ${expiredCount} منتهية` : ''})</h3>
+        ${expiredCount ? '<button id="admin-clean-expired" class="save-btn">🧹 امسح المنتهية</button>' : ''}
+      </div>
+      <p class="pillar-note" style="margin-bottom:10px">
+        كل باسورد ليه اسم صاحبه ومدة صلاحية — لما المدة تخلص بيتقفل <b>تلقائياً</b> وصاحبه مش بيعرف يدخل.
+        حذف أو تعديل أي باسورد بيسجل خروج صاحبه فوراً. كلمة سر الأدمن بتاعتك منفصلة ومش بتتأثر.
       </p>
+      <div class="slip-items">${rows}</div>
+      <hr style="border-color:var(--border); margin:16px 0; border-style:solid; border-width:1px 0 0">
+      <h4 style="margin-bottom:10px">${editing ? `✏️ تعديل باسورد «${escapeHtml(editing.label || 'مستخدم')}»` : '➕ إضافة باسورد جديد'}</h4>
       <form id="admin-pass-form" class="admin-form">
-        <input type="password" id="admin-new-pass" placeholder="كلمة السر الجديدة للمستخدمين" autocomplete="new-password">
-        <input type="password" id="admin-new-pass2" placeholder="تأكيد كلمة السر" autocomplete="new-password">
-        <button type="submit" class="primary-btn" ${hasToken ? '' : 'disabled title="اربط GitHub الأول من تحت"'}>🚀 غيّر وانشر</button>
+        <input type="text" id="admin-pass-label" placeholder="اسم صاحب الباسورد (مثلاً: أحمد)" value="${editing ? escapeHtml(editing.label || '') : ''}">
+        <input type="password" id="admin-pass-value" placeholder="${editing ? 'كلمة السر — سيبها فاضية لو مش عايز تغيّرها' : 'كلمة السر'}" autocomplete="new-password">
+        <select id="admin-pass-days" class="admin-select">
+          <option value="7">صلاحية أسبوع</option>
+          <option value="30" selected>صلاحية شهر</option>
+          <option value="90">صلاحية 3 شهور</option>
+          <option value="365">صلاحية سنة</option>
+          <option value="">من غير انتهاء</option>
+        </select>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button type="submit" class="primary-btn" ${hasToken ? '' : 'disabled title="اربط GitHub الأول من تحت"'}>${editing ? '💾 احفظ وانشر' : '🚀 أضف وانشر'}</button>
+          ${editing ? '<button type="button" id="admin-edit-cancel" class="save-btn">إلغاء التعديل</button>' : ''}
+        </div>
       </form>
+      <p class="pillar-note" style="margin-top:8px">المدة بتتحسب من لحظة الحفظ.</p>
       <p id="admin-pass-status" class="pillar-note"></p>
     </div>
 
@@ -970,9 +1009,9 @@ function renderAdmin() {
     <div class="slip-box">
       <div class="slip-head"><h3>ℹ️ ملاحظات</h3></div>
       <p class="pillar-note">
-        · كلمة سر <b>الأدمن</b> بتتغير من الكمبيوتر بس (بسكريبت change-password.ps1 أو عن طريق كلود) — للأمان.<br>
-        · التغيير بياخد حوالي دقيقة عشان يوصل الموقع بعد النشر.<br>
-        · لو نسيت كلمة سر المستخدمين، غيّرها من هنا عادي — مفيش حاجة بتضيع.
+        · كلمة سر <b>الأدمن</b> بتتغير من الكمبيوتر بس (بسكريبت change-password.ps1 -Admin أو عن طريق كلود) — للأمان.<br>
+        · أي تغيير بياخد حوالي دقيقة عشان يوصل الموقع بعد النشر.<br>
+        · كلمة السر نفسها مش بتتعرض هنا (بتتخزن كبصمة مشفرة) — الاسم اللي بتكتبه هو اللي بيفكرك مين معاه إيه.
       </p>
     </div>
   `;
@@ -988,30 +1027,66 @@ function renderAdmin() {
   const clearBtn = $('#admin-token-clear');
   if (clearBtn) clearBtn.onclick = () => { localStorage.removeItem(GH_TOKEN_KEY); toast('اتمسح المفتاح'); renderAdmin(); };
 
+  // تعديل / حذف / مسح المنتهية
+  area.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => { adminEditIndex = +b.dataset.edit; renderAdmin(); });
+  area.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    const i = +b.dataset.del;
+    const p = passes[i];
+    if (!confirm(`متأكد إنك عايز تحذف باسورد «${p.label || 'مستخدم'}»؟ صاحبه مش هيعرف يدخل تاني.`)) return;
+    await savePasses(passes.filter((_, x) => x !== i), `حذف باسورد ${p.label || 'مستخدم'}`);
+  });
+  const cleanBtn = $('#admin-clean-expired');
+  if (cleanBtn) cleanBtn.onclick = () => savePasses(passes.filter(p => !passExpired(p)), 'مسح الباسوردات المنتهية');
+  const cancelBtn = $('#admin-edit-cancel');
+  if (cancelBtn) cancelBtn.onclick = () => { adminEditIndex = null; renderAdmin(); };
+
+  // إضافة أو تعديل
   $('#admin-pass-form').onsubmit = async e => {
     e.preventDefault();
-    const p1 = $('#admin-new-pass').value, p2 = $('#admin-new-pass2').value;
     const status = $('#admin-pass-status');
-    if (!p1) { status.textContent = '⚠️ اكتب كلمة السر الجديدة'; return; }
-    if (p1 !== p2) { status.textContent = '⚠️ الكلمتين مش متطابقتين'; return; }
-    if (p1.length < 4) { status.textContent = '⚠️ قصيرة أوي — 4 حروف على الأقل'; return; }
-    const btn = e.target.querySelector('button');
-    btn.disabled = true; btn.textContent = '⏳ بنشر التغيير…';
-    try {
-      await publishUserPassword(p1);
-      status.innerHTML = '✅ <b>تم!</b> كلمة السر الجديدة هتشتغل على الموقع خلال دقيقة، وكل المستخدمين هيتطلب منهم الكلمة الجديدة.';
-      $('#admin-new-pass').value = ''; $('#admin-new-pass2').value = '';
-    } catch (err) {
-      status.textContent = '❌ فشل النشر: ' + err.message + (err.message.includes('401') ? ' — المفتاح غلط أو انتهت صلاحيته' : err.message.includes('403') ? ' — المفتاح مش معاه صلاحية Contents على الريبو' : '');
-    }
-    btn.disabled = false; btn.textContent = '🚀 غيّر وانشر';
+    const label = $('#admin-pass-label').value.trim() || 'مستخدم';
+    const passVal = $('#admin-pass-value').value;
+    const days = $('#admin-pass-days').value;
+
+    if (!editing && !passVal) { status.textContent = '⚠️ اكتب كلمة السر'; return; }
+    if (passVal && passVal.length < 4) { status.textContent = '⚠️ قصيرة أوي — 4 حروف على الأقل'; return; }
+
+    const hash = passVal ? await sha256Text(passVal) : editing.hash;
+    if (hash === window.ADMIN_HASH) { status.textContent = '⚠️ دي كلمة سر الأدمن — اختار كلمة تانية'; return; }
+    const clash = passes.some((p, i) => p.hash === hash && i !== adminEditIndex);
+    if (clash) { status.textContent = '⚠️ كلمة السر دي مستخدمة لباسورد تاني في القايمة'; return; }
+
+    const entry = {
+      hash,
+      label,
+      created: editing ? editing.created : new Date().toISOString(),
+      expires: days ? new Date(Date.now() + (+days) * 24 * 3600 * 1000).toISOString() : null,
+    };
+    const next = [...passes];
+    if (editing) next[adminEditIndex] = entry; else next.push(entry);
+    await savePasses(next, editing ? `تعديل باسورد ${label}` : `إضافة باسورد ${label}`);
   };
+
+  async function savePasses(next, actionLabel) {
+    const status = $('#admin-pass-status');
+    if (status) status.textContent = '⏳ بنشر التغيير على الموقع…';
+    try {
+      await publishConfig(next, actionLabel);
+      adminEditIndex = null;
+      renderAdmin();
+      toast(`✅ تم (${actionLabel}) — هيشتغل على الموقع خلال دقيقة`);
+    } catch (err) {
+      const msg = err.message.includes('401') ? 'المفتاح غلط أو انتهت صلاحيته' : err.message.includes('403') ? 'المفتاح مش معاه صلاحية Contents على الريبو' : err.message.includes('مفيش مفتاح') ? err.message : 'HTTP: ' + err.message;
+      if (status) status.textContent = '❌ فشل النشر: ' + msg;
+      else toast('❌ فشل النشر: ' + msg);
+    }
+  }
 }
 
-async function publishUserPassword(newPass) {
+// نشر إعدادات الباسوردات على GitHub (بيحدّث docs/config.js في الريبو)
+async function publishConfig(newPasses, actionLabel) {
   const token = localStorage.getItem(GH_TOKEN_KEY);
-  if (!token) throw new Error('مفيش مفتاح GitHub محفوظ');
-  const newHash = await sha256Text(newPass);
+  if (!token) throw new Error('مفيش مفتاح GitHub محفوظ — اربط GitHub الأول');
   const api = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_CONFIG_PATH}`;
   const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' };
 
@@ -1021,19 +1096,19 @@ async function publishUserPassword(newPass) {
 
   const content = [
     '// إعدادات كلمات السر (مخزنة كبصمات SHA-256)',
-    '// ADMIN_HASH: كلمة سر الأدمن (بتفتح تبويب الإدارة) — USER_HASH: كلمة سر المستخدمين العاديين',
+    '// ADMIN_HASH: كلمة سر الأدمن — USER_PASSES: باسوردات المستخدمين (كل واحد باسم ومدة صلاحية)',
     `window.ADMIN_HASH = '${window.ADMIN_HASH}';`,
-    `window.USER_HASH = '${newHash}';`,
+    `window.USER_PASSES = ${JSON.stringify(newPasses, null, 2)};`,
     '',
   ].join('\n');
   const b64 = btoa(unescape(encodeURIComponent(content)));
 
   const res = await fetch(api, {
     method: 'PUT', headers,
-    body: JSON.stringify({ message: 'تغيير كلمة سر المستخدمين من صفحة الإدارة', content: b64, sha: curData.sha }),
+    body: JSON.stringify({ message: `${actionLabel} — من صفحة الإدارة`, content: b64, sha: curData.sha }),
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
-  window.USER_HASH = newHash;
+  window.USER_PASSES = newPasses;
 }
 
 function updateAdminNav() {

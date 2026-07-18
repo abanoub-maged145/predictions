@@ -375,6 +375,11 @@ html.locked .topbar, html.locked main, html.locked .foot { display: none !import
 }
 .admin-form input:focus { outline: none; border-color: var(--gold); }
 .admin-form .primary-btn:disabled { opacity: .5; cursor: not-allowed; }
+.admin-select {
+  font-family: inherit; font-size: 14px; font-weight: 700;
+  padding: 11px 14px; border-radius: 10px;
+  background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+}
 .shake { animation: shake .4s; }
 @keyframes shake { 25% { transform: translateX(6px); } 50% { transform: translateX(-6px); } 75% { transform: translateX(4px); } }
 

@@ -8,9 +8,13 @@
 (() => {
   const KEY = 'predictor_auth_v1';
 
+  // باسورد المستخدم صالح لو موجود في القايمة ومدته لسه ماخلصتش
+  const validUserHash = h =>
+    (window.USER_PASSES || []).some(p => p.hash === h && (!p.expires || Date.parse(p.expires) > Date.now()));
+
   const saved = sessionStorage.getItem(KEY);
   if (saved === window.ADMIN_HASH) { window.AUTH_ROLE = 'admin'; return; }
-  if (saved === window.USER_HASH) { window.AUTH_ROLE = 'user'; return; }
+  if (validUserHash(saved)) { window.AUTH_ROLE = 'user'; return; }
 
   localStorage.removeItem(KEY); // تنضيف جلسات النسخ القديمة
   document.documentElement.classList.add('locked');
@@ -41,7 +45,7 @@
       e.preventDefault();
       const val = document.getElementById('lock-pass').value;
       const hash = await sha256(val);
-      const role = hash === window.ADMIN_HASH ? 'admin' : hash === window.USER_HASH ? 'user' : null;
+      const role = hash === window.ADMIN_HASH ? 'admin' : validUserHash(hash) ? 'user' : null;
       if (role) {
         sessionStorage.setItem(KEY, hash);
         window.AUTH_ROLE = role;

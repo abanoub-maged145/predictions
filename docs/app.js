@@ -1040,6 +1040,11 @@ function updateAdminNav() {
   $('#nav-admin').classList.toggle('hidden', window.AUTH_ROLE !== 'admin');
 }
 
+function logout() {
+  sessionStorage.removeItem('predictor_auth_v1');
+  location.reload(); // هيرجع لشاشة القفل
+}
+
 // ---------- إشعار خفيف ----------
 let toastTimer;
 function toast(msg) {
@@ -1097,5 +1102,6 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); };
   updateAdminNav();
   document.addEventListener('predictor-authed', updateAdminNav);
+  $('#nav-logout').onclick = logout;
   setDate(new Date());
 });

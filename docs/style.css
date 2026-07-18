@@ -54,6 +54,7 @@ body {
 }
 .nav-btn:hover { color: var(--text); background: var(--card); }
 .nav-btn.active { background: var(--card2); color: var(--gold); border-color: var(--border); }
+.logout-btn:hover { color: var(--red) !important; border-color: rgba(231, 76, 60, .4) !important; }
 
 main { max-width: 1100px; margin: 0 auto; padding: 22px 20px 60px; }
 

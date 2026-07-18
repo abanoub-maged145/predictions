@@ -917,6 +917,129 @@ async function learnFromResults() {
   toast(newly ? `🧠 النظام اتعلم من ${newly} ماتش جديد` : 'مفيش ماتشات جديدة خلصت لسه');
 }
 
+// ---------- صفحة الإدارة (للأدمن بس) ----------
+const GH_OWNER = 'abanoub-maged145';
+const GH_REPO = 'predictions';
+const GH_CONFIG_PATH = 'docs/config.js';
+const GH_TOKEN_KEY = 'predictor_gh_token';
+
+const sha256Text = async text => {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+function renderAdmin() {
+  const area = $('#admin-area');
+  const hasToken = !!localStorage.getItem(GH_TOKEN_KEY);
+  area.innerHTML = `
+    <div class="slip-box">
+      <div class="slip-head"><h3>🔑 كلمة سر المستخدمين العاديين</h3></div>
+      <p class="pillar-note" style="margin-bottom:12px">
+        دي الكلمة اللي بيدخل بيها أي حد غيرك. لما تغيّرها وتنشر،
+        <b>كل المستخدمين هيتسجل خروجهم تلقائياً</b> وهيحتاجوا الكلمة الجديدة.
+        كلمة سر الأدمن بتاعتك مش بتتأثر.
+      </p>
+      <form id="admin-pass-form" class="admin-form">
+        <input type="password" id="admin-new-pass" placeholder="كلمة السر الجديدة للمستخدمين" autocomplete="new-password">
+        <input type="password" id="admin-new-pass2" placeholder="تأكيد كلمة السر" autocomplete="new-password">
+        <button type="submit" class="primary-btn" ${hasToken ? '' : 'disabled title="اربط GitHub الأول من تحت"'}>🚀 غيّر وانشر</button>
+      </form>
+      <p id="admin-pass-status" class="pillar-note"></p>
+    </div>
+
+    <div class="slip-box">
+      <div class="slip-head"><h3>🔗 ربط GitHub ${hasToken ? '<span class="conf-badge conf-high">متصل ✓</span>' : '<span class="conf-badge conf-low">مش متصل</span>'}</h3></div>
+      <p class="pillar-note" style="margin-bottom:12px">
+        عشان صفحة الإدارة تقدر تنشر التغيير على الموقع مباشرة (حتى من الفون)، محتاجة مفتاح GitHub — مرة واحدة بس.
+        المفتاح بيتخزن <b>على الجهاز ده بس</b> ومش بيتبعت لأي حد غير GitHub نفسه.<br><br>
+        <b>طريقة عمل المفتاح:</b><br>
+        1) افتح <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" style="color:var(--gold)">صفحة إنشاء مفتاح جديد</a> (لازم تكون مسجل دخول بحسابك)<br>
+        2) Token name: اكتب أي اسم (مثلاً predictor) · Expiration: اختار 1 year<br>
+        3) Repository access → اختار Only select repositories → واختار <b>predictions</b><br>
+        4) Permissions → Repository permissions → <b>Contents</b> → اختار <b>Read and write</b><br>
+        5) اضغط Generate token وانسخ المفتاح والصقه هنا
+      </p>
+      <form id="admin-token-form" class="admin-form">
+        <input type="password" id="admin-token" placeholder="${hasToken ? 'المفتاح محفوظ — الصق واحد جديد لو عايز تغيّره' : 'الصق المفتاح هنا (بيبدأ بـ github_pat_)'}">
+        <button type="submit" class="primary-btn">💾 احفظ المفتاح</button>
+        ${hasToken ? '<button type="button" id="admin-token-clear" class="save-btn">🗑 امسح المفتاح</button>' : ''}
+      </form>
+      <p id="admin-token-status" class="pillar-note"></p>
+    </div>
+
+    <div class="slip-box">
+      <div class="slip-head"><h3>ℹ️ ملاحظات</h3></div>
+      <p class="pillar-note">
+        · كلمة سر <b>الأدمن</b> بتتغير من الكمبيوتر بس (بسكريبت change-password.ps1 أو عن طريق كلود) — للأمان.<br>
+        · التغيير بياخد حوالي دقيقة عشان يوصل الموقع بعد النشر.<br>
+        · لو نسيت كلمة سر المستخدمين، غيّرها من هنا عادي — مفيش حاجة بتضيع.
+      </p>
+    </div>
+  `;
+
+  $('#admin-token-form').onsubmit = e => {
+    e.preventDefault();
+    const val = $('#admin-token').value.trim();
+    if (!val) return;
+    localStorage.setItem(GH_TOKEN_KEY, val);
+    toast('✅ المفتاح اتحفظ على الجهاز ده');
+    renderAdmin();
+  };
+  const clearBtn = $('#admin-token-clear');
+  if (clearBtn) clearBtn.onclick = () => { localStorage.removeItem(GH_TOKEN_KEY); toast('اتمسح المفتاح'); renderAdmin(); };
+
+  $('#admin-pass-form').onsubmit = async e => {
+    e.preventDefault();
+    const p1 = $('#admin-new-pass').value, p2 = $('#admin-new-pass2').value;
+    const status = $('#admin-pass-status');
+    if (!p1) { status.textContent = '⚠️ اكتب كلمة السر الجديدة'; return; }
+    if (p1 !== p2) { status.textContent = '⚠️ الكلمتين مش متطابقتين'; return; }
+    if (p1.length < 4) { status.textContent = '⚠️ قصيرة أوي — 4 حروف على الأقل'; return; }
+    const btn = e.target.querySelector('button');
+    btn.disabled = true; btn.textContent = '⏳ بنشر التغيير…';
+    try {
+      await publishUserPassword(p1);
+      status.innerHTML = '✅ <b>تم!</b> كلمة السر الجديدة هتشتغل على الموقع خلال دقيقة، وكل المستخدمين هيتطلب منهم الكلمة الجديدة.';
+      $('#admin-new-pass').value = ''; $('#admin-new-pass2').value = '';
+    } catch (err) {
+      status.textContent = '❌ فشل النشر: ' + err.message + (err.message.includes('401') ? ' — المفتاح غلط أو انتهت صلاحيته' : err.message.includes('403') ? ' — المفتاح مش معاه صلاحية Contents على الريبو' : '');
+    }
+    btn.disabled = false; btn.textContent = '🚀 غيّر وانشر';
+  };
+}
+
+async function publishUserPassword(newPass) {
+  const token = localStorage.getItem(GH_TOKEN_KEY);
+  if (!token) throw new Error('مفيش مفتاح GitHub محفوظ');
+  const newHash = await sha256Text(newPass);
+  const api = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_CONFIG_PATH}`;
+  const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' };
+
+  const cur = await fetch(api, { headers });
+  if (!cur.ok) throw new Error('HTTP ' + cur.status);
+  const curData = await cur.json();
+
+  const content = [
+    '// إعدادات كلمات السر (مخزنة كبصمات SHA-256)',
+    '// ADMIN_HASH: كلمة سر الأدمن (بتفتح تبويب الإدارة) — USER_HASH: كلمة سر المستخدمين العاديين',
+    `window.ADMIN_HASH = '${window.ADMIN_HASH}';`,
+    `window.USER_HASH = '${newHash}';`,
+    '',
+  ].join('\n');
+  const b64 = btoa(unescape(encodeURIComponent(content)));
+
+  const res = await fetch(api, {
+    method: 'PUT', headers,
+    body: JSON.stringify({ message: 'تغيير كلمة سر المستخدمين من صفحة الإدارة', content: b64, sha: curData.sha }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  window.USER_HASH = newHash;
+}
+
+function updateAdminNav() {
+  $('#nav-admin').classList.toggle('hidden', window.AUTH_ROLE !== 'admin');
+}
+
 // ---------- إشعار خفيف ----------
 let toastTimer;
 function toast(msg) {
@@ -933,9 +1056,11 @@ function switchView(view) {
   $('#view-matches').classList.toggle('hidden', view !== 'matches');
   $('#view-slips').classList.toggle('hidden', view !== 'slips');
   $('#view-stats').classList.toggle('hidden', view !== 'stats');
+  $('#view-admin').classList.toggle('hidden', view !== 'admin');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'slips') renderSlips();
   if (view === 'stats') renderStats();
+  if (view === 'admin') renderAdmin();
 }
 
 function setDate(d) {
@@ -970,5 +1095,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchView(b.dataset.view));
   $('#modal-close').onclick = () => $('#modal').classList.add('hidden');
   $('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); };
+  updateAdminNav();
+  document.addEventListener('predictor-authed', updateAdminNav);
   setDate(new Date());
 });

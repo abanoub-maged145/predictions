@@ -364,6 +364,16 @@ html.locked .topbar, html.locked main, html.locked .foot { display: none !import
   background: linear-gradient(135deg, var(--gold), #e09c25); color: #1a1205;
 }
 .lock-error { font-size: 13px; color: var(--red); margin-top: 12px; font-weight: 700; }
+
+/* صفحة الإدارة */
+.admin-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+.admin-form input {
+  font-family: inherit; font-size: 14px; font-weight: 700;
+  padding: 11px 14px; border-radius: 10px;
+  background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+}
+.admin-form input:focus { outline: none; border-color: var(--gold); }
+.admin-form .primary-btn:disabled { opacity: .5; cursor: not-allowed; }
 .shake { animation: shake .4s; }
 @keyframes shake { 25% { transform: translateX(6px); } 50% { transform: translateX(-6px); } 75% { transform: translateX(4px); } }
 

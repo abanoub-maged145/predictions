@@ -1,15 +1,18 @@
 // ============================================================
-// شاشة القفل — بتقارن بصمة SHA-256 لكلمة السر ببصمة config.js
-// أول ما تدخل صح، الجهاز بيفتكرك لحد ما كلمة السر تتغير
+// شاشة القفل — نظام صلاحيتين:
+//   كلمة سر الأدمن  → دخول كامل + تبويب الإدارة
+//   كلمة سر المستخدمين → دخول عادي
+// الجلسة سارية طول ما المتصفح مفتوح. لو كلمة السر اتغيرت
+// من الإدارة، الجلسات القديمة بتقع تلقائياً (البصمة مش هتطابق)
 // ============================================================
 (() => {
   const KEY = 'predictor_auth_v1';
 
-  // الجلسة سارية طول ما المتصفح مفتوح — تقفله وترجع، بيطلب كلمة السر تاني
-  if (sessionStorage.getItem(KEY) === window.PASS_HASH) return;
-  localStorage.removeItem(KEY); // تنضيف الجلسات القديمة من النسخ السابقة
+  const saved = sessionStorage.getItem(KEY);
+  if (saved === window.ADMIN_HASH) { window.AUTH_ROLE = 'admin'; return; }
+  if (saved === window.USER_HASH) { window.AUTH_ROLE = 'user'; return; }
 
-  // اقفل الصفحة لحد ما يدخل كلمة السر
+  localStorage.removeItem(KEY); // تنضيف جلسات النسخ القديمة
   document.documentElement.classList.add('locked');
 
   const sha256 = async text => {
@@ -38,16 +41,19 @@
       e.preventDefault();
       const val = document.getElementById('lock-pass').value;
       const hash = await sha256(val);
-      if (hash === window.PASS_HASH) {
+      const role = hash === window.ADMIN_HASH ? 'admin' : hash === window.USER_HASH ? 'user' : null;
+      if (role) {
         sessionStorage.setItem(KEY, hash);
+        window.AUTH_ROLE = role;
         overlay.remove();
         document.documentElement.classList.remove('locked');
+        document.dispatchEvent(new CustomEvent('predictor-authed'));
       } else {
         const err = document.getElementById('lock-error');
         err.classList.remove('hidden');
         const card = overlay.querySelector('.lock-card');
         card.classList.remove('shake');
-        void card.offsetWidth; // إعادة تشغيل الأنيميشن
+        void card.offsetWidth;
         card.classList.add('shake');
         document.getElementById('lock-pass').select();
       }

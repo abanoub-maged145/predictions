@@ -91,17 +91,28 @@ function migrateLegacyStorage() {
 }
 
 // معاملات المعايرة من سجل الدقة: لو ثقة 80% بتصيب 65% فعلاً → نزّلها
+// معايرة عامة + معايرة لكل سوق لوحده (انحياز خط الأهداف غير انحياز النتيجة)
 function calibFactors() {
   const learned = loadLearned();
   const mids = { '50': 55, '60': 65, '70': 75, '80': 85, '90': 92 };
-  const out = {};
-  for (const [b, mid] of Object.entries(mids)) {
-    const s = learned.buckets[b];
-    if (s && s.total >= 8) {
-      out[b] = Math.max(0.75, Math.min(1.12, (s.hit / s.total) * 100 / mid));
+  const factorize = buckets => {
+    const out = {};
+    for (const [b, mid] of Object.entries(mids)) {
+      const s = buckets?.[b];
+      if (s && s.total >= 8) {
+        out[b] = Math.max(0.75, Math.min(1.12, (s.hit / s.total) * 100 / mid));
+      }
     }
+    return Object.keys(out).length ? out : null;
+  };
+  const _all = factorize(learned.buckets);
+  const byMkt = {};
+  for (const [mkt, buckets] of Object.entries(learned.bucketsMkt || {})) {
+    const f = factorize(buckets);
+    if (f) byMkt[mkt] = f;
   }
-  return Object.keys(out).length ? out : null;
+  if (!_all && !Object.keys(byMkt).length) return null;
+  return { _all, byMkt };
 }
 
 // ---------- جدول الترتيب (قوة الخصوم) ----------
@@ -131,6 +142,49 @@ async function getOppStrength(league) {
   return map;
 }
 
+// ---------- تقييم Elo محلي ----------
+// بيتبني تلقائياً من كل نتيجة الموقع بيشوفها — مقياس قوة موحد لكل الفرق
+// في كل البطولات (بيحل مشكلة مقارنة فرق من دوريات مختلفة).
+// مشترك بين المستخدمين لأنه بيانات موضوعية، وبيتزامن مع النسخ الاحتياطية.
+const ELO_KEY = 'predictor_elo_v1';
+const EloDB = {
+  d: null,
+  load() { if (!this.d) this.d = store.get(ELO_KEY, { teams: {}, done: {}, order: [] }); return this.d; },
+  save() { store.set(ELO_KEY, this.d); },
+  get(id) { return this.load().teams[String(id)] || { r: 1500, n: 0 }; },
+  // قوة من 0 لـ 1 حوالين 0.5 — null لو الفريق لسه ملوش تاريخ كفاية
+  strength01(id) {
+    const t = this.get(id);
+    return t.n >= 5 ? 1 / (1 + Math.pow(10, -(t.r - 1500) / 300)) : null;
+  },
+  record(m) {
+    const d = this.load();
+    if (d.done[m.id]) return false;
+    const hs = parseInt(m.home.score, 10), as = parseInt(m.away.score, 10);
+    if (isNaN(hs) || isNaN(as)) return false;
+    const h = d.teams[String(m.home.id)] ??= { r: 1500, n: 0 };
+    const a = d.teams[String(m.away.id)] ??= { r: 1500, n: 0 };
+    const exp = 1 / (1 + Math.pow(10, -((h.r + (m.neutralSite ? 0 : 60)) - a.r) / 400));
+    const res = hs > as ? 1 : hs === as ? 0.5 : 0;
+    const gd = Math.abs(hs - as);
+    const mult = gd <= 1 ? 1 : gd === 2 ? 1.3 : 1.5 + (gd - 3) * 0.1; // فوز عريض بيحرك التقييم أكتر
+    const K = t => t.n < 10 ? 40 : 24; // الفرق الجديدة بتتحرك أسرع لحد ما تستقر
+    h.r = +(h.r + K(h) * mult * (res - exp)).toFixed(1);
+    a.r = +(a.r + K(a) * mult * ((1 - res) - (1 - exp))).toFixed(1);
+    h.n++; a.n++;
+    d.done[m.id] = 1; d.order.push(m.id);
+    while (d.order.length > 4000) delete d.done[d.order.shift()];
+    return true;
+  },
+  recordBatch(list) {
+    let n = 0;
+    for (const m of list) if (m.state === 'post' && this.record(m)) n++;
+    if (n) this.save();
+    return n;
+  },
+  teamCount() { return Object.keys(this.load().teams).length; },
+};
+
 // ---------- جلب ماتشات اليوم ----------
 async function loadMatches() {
   const grid = $('#matches-area');
@@ -158,17 +212,18 @@ async function loadMatches() {
   const results = await Promise.all(jobs);
 
   const seen = new Set();
-  const matches = [];
+  const matches = [], finished = [];
   for (const { lg, events } of results) {
     for (const ev of events) {
       if (seen.has(ev.id)) continue;
-      const local = new Date(ev.date);
-      if (fmtDateISO(local) !== targetISO) continue;
       seen.add(ev.id);
       const m = toMatch(ev, lg.code);
-      if (m) matches.push(m);
+      if (!m) continue;
+      if (m.state === 'post') finished.push(m); // أي نتيجة بتغذي تقييم Elo حتى لو مش يوم العرض
+      if (fmtDateISO(new Date(ev.date)) === targetISO) matches.push(m);
     }
   }
+  EloDB.recordBatch(finished);
   matches.sort((a, b) => new Date(a.date) - new Date(b.date));
   state.matches = matches;
   renderMatches();
@@ -227,6 +282,7 @@ async function loadLeagueFixtures(code) {
     const m = toMatch(ev, code);
     if (m) matches.push(m);
   }
+  EloDB.recordBatch(matches);
   matches.sort((a, b) => new Date(a.date) - new Date(b.date));
   state.matches = matches;
   renderLeagueMatches();
@@ -397,6 +453,13 @@ async function getAnalysis(m, { withOverlap = true } = {}) {
   }
 
   const learned = loadLearned();
+  // قوة الخصم: دمج ترتيب الدوري مع تقييم Elo (اللي متاح منهم)
+  const strengthOf = id => {
+    const st = oppStrength[String(id)];
+    const es = EloDB.strength01(id);
+    if (st != null && es != null) return 0.5 * st + 0.5 * es;
+    return es ?? st ?? null;
+  };
   const analysis = Engine.analyze({
     h2hGames,
     homeForm: formOf(m.home.id),
@@ -411,6 +474,9 @@ async function getAnalysis(m, { withOverlap = true } = {}) {
     neutralSite: m.neutralSite,
     kickoff: m.date,
     oppStrength,
+    strengthOf,
+    elo: { home: EloDB.get(m.home.id), away: EloDB.get(m.away.id) },
+    marketWeight: learned.mktW || 0.45,
     pickcenter: summary.pickcenter || summary.odds || null,
     learnedWeights: learned.weights,
     calib: calibFactors(),
@@ -434,6 +500,7 @@ function autolog(m, a) {
     best: { label: a.best.pickLabel, conf: a.best.conf },
     markets: a.markets.map(mk => ({ market: mk.market, pickCode: mk.pick, prob: +mk.prob.toFixed(3), mkt: mk.mkt != null ? +mk.mkt.toFixed(3) : null, conf: mk.conf })),
     leans: a.pillarLeans,
+    modelPick: a.modelPick ?? null, marketPick: a.marketPick ?? null,
     status: 'pending', score: null,
   };
   if (idx >= 0) { if (log[idx].status === 'pending') log[idx] = rec; }
@@ -531,7 +598,7 @@ async function openAnalysis(m) {
       <div class="st-bar"><div class="st-fill" style="width:${(a.strength.home / (a.strength.home + a.strength.away)) * 100}%"></div></div>
       <span class="st-num">${a.strength.away}</span>
     </div>
-    <p class="st-caption">مؤشر القوة الإجمالي (${Math.round(a.quality * 100)}% اكتمال بيانات)</p>
+    <p class="st-caption">مؤشر القوة الإجمالي (${Math.round(a.quality * 100)}% اكتمال بيانات)${a.eloInfo ? ` · Elo: ‏${a.eloInfo.home} ضد ${a.eloInfo.away}${a.eloInfo.weight ? '' : ' — لسه بيتبني'}` : ''}</p>
 
     <div class="pillars">
       <div class="pillar">
@@ -899,6 +966,7 @@ function renderStats() {
     <div class="stat-box"><b>${log.length}</b><span>ماتش متسجل تلقائياً</span></div>
     <div class="stat-box"><b>${settledLogs.length}</b><span>ماتش اتحسبت نتيجته</span></div>
     <div class="stat-box"><b>${totalN ? Math.round(totalHit / totalN * 100) + '%' : '—'}</b><span>دقة كل التوقعات (${totalHit}/${totalN})</span></div>
+    <div class="stat-box"><b>${EloDB.teamCount()}</b><span>فريق في قاعدة Elo</span></div>
     <button id="btn-learn" class="primary-btn">🧠 حدّث وتعلّم</button>
   `;
   area.appendChild(header);
@@ -975,7 +1043,9 @@ function renderStats() {
     <div class="calib-row"><span class="cal-label">🔄 المواجهات المباشرة</span><div class="pb"><div class="pb-fill" style="width:${w.h2h * 100}%"></div></div><span class="cal-val">${Math.round(w.h2h * 100)}%${accTxt('h2h')}</span></div>
     <div class="calib-row"><span class="cal-label">📈 الفورمة</span><div class="pb"><div class="pb-fill" style="width:${w.form * 100}%"></div></div><span class="cal-val">${Math.round(w.form * 100)}%${accTxt('form')}</span></div>
     <div class="calib-row"><span class="cal-label">👥 التشكيلة</span><div class="pb"><div class="pb-fill" style="width:${w.squad * 100}%"></div></div><span class="cal-val">${Math.round(w.squad * 100)}%${accTxt('squad')}</span></div>
-    <p class="pillar-note" style="margin-top:10px">النظام بيتابع أنهي عمود بيصيب أكتر في توقع نتيجة الماتش، وبيزود وزنه تدريجياً (بعد 15 ماتش محسوبة على الأقل).</p>
+    <div class="calib-row"><span class="cal-label">💰 وزن رأي السوق</span><div class="pb"><div class="pb-fill" style="width:${(learned.mktW || 0.45) * 100}%"></div></div><span class="cal-val">${Math.round((learned.mktW || 0.45) * 100)}%${learned.mktW ? ' (متعلم)' : ' (افتراضي)'}</span></div>
+    ${learned.mktStats?.model.total ? `<p class="pillar-note" style="margin-top:6px">في الـ ${learned.mktStats.model.total} ماتش اللي نموذجنا اختلف فيهم مع السوق: نموذجنا صاب ${Math.round(learned.mktStats.model.hit / learned.mktStats.model.total * 100)}% والسوق صاب ${Math.round(learned.mktStats.market.hit / learned.mktStats.market.total * 100)}% — والوزن بيتظبط تلقائياً على أساسها.</p>` : ''}
+    <p class="pillar-note" style="margin-top:10px">النظام بيتابع أنهي عمود بيصيب أكتر في توقع نتيجة الماتش، وبيزود وزنه تدريجياً (بعد 15 ماتش محسوبة على الأقل). المعايرة كمان بتتم لكل نوع سوق لوحده أول ما العينة تكفي.</p>
   `;
   area.appendChild(wBox);
 
@@ -997,7 +1067,7 @@ async function learnFromResults() {
     const sc = eventScores[rec.id];
     if (!sc || isNaN(sc.h) || isNaN(sc.a)) continue;
 
-    // معايرة الثقة: كل سوق اتقيم حسب دلو ثقته
+    // معايرة الثقة: كل سوق اتقيم حسب دلو ثقته — عام + لكل نوع سوق لوحده
     for (const mk of rec.markets) {
       const ok = Engine.evaluatePick({ market: mk.market, pickCode: mk.pickCode }, sc.h, sc.a);
       if (ok === null) continue;
@@ -1005,10 +1075,24 @@ async function learnFromResults() {
       learned.buckets[b] ??= { hit: 0, total: 0 };
       learned.buckets[b].total++;
       if (ok) learned.buckets[b].hit++;
+      learned.bucketsMkt ??= {};
+      const bm = (learned.bucketsMkt[mk.market] ??= {});
+      bm[b] ??= { hit: 0, total: 0 };
+      bm[b].total++;
+      if (ok) bm[b].hit++;
     }
 
     // دقة الأعمدة: ميل العمود طابق نتيجة الماتش؟
     const actual = sc.h > sc.a ? 'H' : sc.h < sc.a ? 'A' : 'D';
+
+    // نموذجنا ضد السوق: في الماتشات اللي اختلفوا فيها — مين طلع صح؟
+    if (rec.modelPick && rec.marketPick && rec.modelPick !== rec.marketPick) {
+      learned.mktStats ??= { model: { hit: 0, total: 0 }, market: { hit: 0, total: 0 } };
+      learned.mktStats.model.total++;
+      if (rec.modelPick === actual) learned.mktStats.model.hit++;
+      learned.mktStats.market.total++;
+      if (rec.marketPick === actual) learned.mktStats.market.hit++;
+    }
     for (const k of ['h2h', 'form', 'squad']) {
       const lean = rec.leans?.[k];
       if (!lean) continue;
@@ -1038,6 +1122,14 @@ async function learnFromResults() {
     };
   }
 
+  // تعديل وزن السوق: لو السوق بيكسب نموذجنا في الخلافات وزنه بيزيد تدريجياً (والعكس)
+  const ms = learned.mktStats;
+  if (ms && ms.model.total >= 10) {
+    const gap = (ms.market.hit / ms.market.total) - (ms.model.hit / ms.model.total);
+    const target = Math.max(0.30, Math.min(0.60, 0.45 + gap * 0.5));
+    learned.mktW = +(0.7 * (learned.mktW || 0.45) + 0.3 * target).toFixed(3);
+  }
+
   store.set(autologKey(), log);
   store.set(learnedKey(), learned);
   state.analysisCache = {}; // التحليلات الجاية هتستخدم الأوزان والمعايرة الجديدة
@@ -1064,6 +1156,7 @@ function collectMyData() {
     slips: loadSlips(),
     autolog: store.get(autologKey(), []),
     learned: loadLearned(),
+    elo: store.get(ELO_KEY, null),
   };
 }
 
@@ -1094,6 +1187,20 @@ function mergeMyData(incoming) {
 
   const learned = loadLearned();
   if ((incoming.learned?.settled || 0) > (learned.settled || 0)) store.set(learnedKey(), incoming.learned);
+
+  // قاعدة Elo: لكل فريق ناخد النسخة اللي شافت ماتشات أكتر
+  if (incoming.elo?.teams) {
+    const cur = store.get(ELO_KEY, { teams: {}, done: {}, order: [] });
+    for (const [id, t] of Object.entries(incoming.elo.teams)) {
+      if (!cur.teams[id] || (t.n || 0) > (cur.teams[id].n || 0)) cur.teams[id] = t;
+    }
+    for (const id of Object.keys(incoming.elo.done || {})) {
+      if (!cur.done[id]) { cur.done[id] = 1; cur.order.push(id); }
+    }
+    while (cur.order.length > 4000) delete cur.done[cur.order.shift()];
+    store.set(ELO_KEY, cur);
+    EloDB.d = null;
+  }
 
   state.analysisCache = {};
 }

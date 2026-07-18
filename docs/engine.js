@@ -313,13 +313,13 @@ const Engine = (() => {
       { code: 'X2', label: `فوز أو تعادل ${awayName}`, p: pAway + pDraw, mkt: market ? market.pA + market.pD : null },
       { code: '12', label: 'لا تعادل (أي فريق يكسب)', p: pHome + pAway, mkt: market ? market.pH + market.pA : null },
     ].sort((a, b) => b.p - a.p);
-    markets.push({ market: 'DC', marketLabel: 'فرصة مزدوجة', pick: dcOpts[0].code, pickLabel: dcOpts[0].label, prob: dcOpts[0].p, conf: confOf(dcOpts[0].p, agreeAdj), value: valueOf(dcOpts[0].p, dcOpts[0].mkt) });
+    markets.push({ market: 'DC', marketLabel: 'فرصة مزدوجة', pick: dcOpts[0].code, pickLabel: dcOpts[0].label, prob: dcOpts[0].p, mkt: dcOpts[0].mkt, conf: confOf(dcOpts[0].p, agreeAdj), value: valueOf(dcOpts[0].p, dcOpts[0].mkt) });
 
     // خطوط الأهداف
     const ouMain = pOver25 >= 0.5
       ? { code: 'O', label: 'أكثر من 2.5 هدف', p: pOver25, mkt: market?.ou && Math.abs(market.ou.line - 2.5) < 0.01 ? market.ou.pOver : null }
       : { code: 'U', label: 'أقل من 2.5 هدف', p: pUnder25, mkt: market?.ou && Math.abs(market.ou.line - 2.5) < 0.01 ? market.ou.pUnder : null };
-    markets.push({ market: 'OU25', marketLabel: 'خط 2.5 هدف', pick: ouMain.code, pickLabel: ouMain.label, prob: ouMain.p, conf: confOf(ouMain.p), value: valueOf(ouMain.p, ouMain.mkt) });
+    markets.push({ market: 'OU25', marketLabel: 'خط 2.5 هدف', pick: ouMain.code, pickLabel: ouMain.label, prob: ouMain.p, mkt: ouMain.mkt, conf: confOf(ouMain.p), value: valueOf(ouMain.p, ouMain.mkt) });
 
     if (mx.pO15 >= 0.78) markets.push({ market: 'OU15', marketLabel: 'خط 1.5 هدف', pick: 'O', pickLabel: 'أكثر من 1.5 هدف', prob: mx.pO15, conf: confOf(mx.pO15), value: null });
     if ((1 - mx.pO35) >= 0.78) markets.push({ market: 'OU35', marketLabel: 'خط 3.5 هدف', pick: 'U', pickLabel: 'أقل من 3.5 هدف', prob: 1 - mx.pO35, conf: confOf(1 - mx.pO35), value: null });
@@ -336,7 +336,7 @@ const Engine = (() => {
       { code: 'D', label: 'تعادل', p: pDraw, mkt: market?.pD },
       { code: 'A', label: `فوز ${awayName}`, p: pAway, mkt: market?.pA },
     ].sort((a, b) => b.p - a.p);
-    markets.push({ market: '1X2', marketLabel: 'نتيجة الماتش', pick: oneXtwo[0].code, pickLabel: oneXtwo[0].label, prob: oneXtwo[0].p, conf: confOf(oneXtwo[0].p, agreeAdj), value: valueOf(oneXtwo[0].p, oneXtwo[0].mkt) });
+    markets.push({ market: '1X2', marketLabel: 'نتيجة الماتش', pick: oneXtwo[0].code, pickLabel: oneXtwo[0].label, prob: oneXtwo[0].p, mkt: oneXtwo[0].mkt ?? null, conf: confOf(oneXtwo[0].p, agreeAdj), value: valueOf(oneXtwo[0].p, oneXtwo[0].mkt) });
 
     // النتيجة بالظبط (احتمالها صغير بطبيعتها — للاستئناس والجرأة)
     const ts = mx.topScores[0];

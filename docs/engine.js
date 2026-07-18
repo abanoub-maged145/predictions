@@ -93,7 +93,8 @@ const Engine = (() => {
 
   // ---------- العمود الثاني: الفورمة (قوة الخصم + الأرض + الراحة) ----------
   // oppStrength: خريطة teamId -> percentile من 0 لـ 1 (1 = فريق قمة)
-  function formPillar(games, teamId, { oppStrength = {}, kickoff = null, venue = null } = {}) {
+  // strengthOf: دالة بديلة أذكى (ترتيب + Elo) — ليها الأولوية لو موجودة
+  function formPillar(games, teamId, { oppStrength = {}, strengthOf = null, kickoff = null, venue = null } = {}) {
     const now = Date.now();
     const finished = (games || []).filter(g => {
       const hs = parseInt(g.homeTeamScore, 10), as = parseInt(g.awayTeamScore, 10);
@@ -110,7 +111,7 @@ const Engine = (() => {
         const wasHome = String(g.homeTeamId) === String(teamId);
         const myGoals = wasHome ? hs : as, oppGoals = wasHome ? as : hs;
         const oppId = wasHome ? g.awayTeamId : g.homeTeamId;
-        const sf = oppStrength[String(oppId)] ?? 0.5; // قوة الخصم
+        const sf = (strengthOf ? strengthOf(oppId) : oppStrength[String(oppId)]) ?? 0.5; // قوة الخصم
 
         let p;
         if (myGoals > oppGoals) { p = (0.78 + 0.47 * sf) * (wasHome ? 1 : 1.1); } // فوز على قوي = نقاط أكتر
@@ -177,18 +178,28 @@ const Engine = (() => {
     return { available: true, score: clamp(score, 40, 100), injuries: injuryCount, starters };
   }
 
-  // ---------- مصفوفة بواسون الكاملة ----------
+  // ---------- مصفوفة بواسون الكاملة (بتصحيح Dixon-Coles) ----------
+  // بواسون المستقلة بتقلل من احتمال النتايج الواطية (0-0 و1-1) —
+  // التصحيح بيعدل الخانات الأربع دول زي ما أثبتته بيانات عشرات المواسم
+  const DC_RHO = -0.09;
   function poissonMatrix(lh, la, max = 7) {
     const ph = [], pa = [];
     let sh = 0, sa = 0;
     for (let k = 0; k < max; k++) { ph.push(pois(k, lh)); sh += ph[k]; pa.push(pois(k, la)); sa += pa[k]; }
     ph.push(Math.max(0, 1 - sh)); pa.push(Math.max(0, 1 - sa)); // الذيل
 
-    let pHW = 0, pD = 0, pAW = 0, pO15 = 0, pO25 = 0, pO35 = 0, pBtts = 0;
+    const tau = (h, a) =>
+      h === 0 && a === 0 ? 1 - lh * la * DC_RHO :
+      h === 0 && a === 1 ? 1 + lh * DC_RHO :
+      h === 1 && a === 0 ? 1 + la * DC_RHO :
+      h === 1 && a === 1 ? 1 - DC_RHO : 1;
+
+    let pHW = 0, pD = 0, pAW = 0, pO15 = 0, pO25 = 0, pO35 = 0, pBtts = 0, T = 0;
     const scores = [];
     for (let h = 0; h <= max; h++) {
       for (let a = 0; a <= max; a++) {
-        const p = ph[h] * pa[a];
+        const p = ph[h] * pa[a] * tau(h, a);
+        T += p;
         if (h > a) pHW += p; else if (h === a) pD += p; else pAW += p;
         const tot = h + a;
         if (tot > 1.5) pO15 += p;
@@ -198,16 +209,23 @@ const Engine = (() => {
         if (h < max && a < max) scores.push({ h, a, p });
       }
     }
+    // إعادة تطبيع بعد التصحيح عشان المجموع يرجع 100%
+    pHW /= T; pD /= T; pAW /= T; pO15 /= T; pO25 /= T; pO35 /= T; pBtts /= T;
+    for (const s of scores) s.p /= T;
     scores.sort((x, y) => y.p - x.p);
     return { pHW, pD, pAW, pO15, pO25, pO35, pBtts, topScores: scores.slice(0, 3) };
   }
 
   // ---------- المعايرة الذاتية ----------
-  // calib: { '60': factor, '70': ..., '80': ..., '90': ... } من صفحة الدقة
+  // calib: { _all: {'60': factor, ...}, byMkt: { '1X2': {...}, 'OU25': {...} } }
+  // معايرة كل سوق لوحده أدق (انحياز خط الأهداف غير انحياز النتيجة) —
+  // ولو عينة السوق قليلة بنرجع للمعايرة العامة. بندعم الشكل القديم المسطح برضه.
   const bucketOf = c => c >= 90 ? '90' : c >= 80 ? '80' : c >= 70 ? '70' : c >= 60 ? '60' : '50';
-  function calibrate(rawConf, calib) {
+  function calibrate(rawConf, calib, mkt) {
     if (!calib) return rawConf;
-    const f = calib[bucketOf(rawConf)];
+    const b = bucketOf(rawConf);
+    const flat = calib._all || calib.byMkt ? calib._all : calib;
+    const f = (mkt && calib.byMkt?.[mkt]?.[b]) ?? flat?.[b];
     if (!f) return rawConf;
     return Math.round(clamp(rawConf * f, 5, 96));
   }
@@ -217,13 +235,14 @@ const Engine = (() => {
     h2hGames, homeForm, awayForm, homeId, awayId,
     homeRoster, awayRoster, homeInjuries, awayInjuries,
     overlapByGame, neutralSite, kickoff,
-    oppStrength = {}, pickcenter = null,
+    oppStrength = {}, strengthOf = null, pickcenter = null,
+    elo = null, marketWeight = 0.45,
     learnedWeights = null, calib = null,
     homeName = 'صاحب الأرض', awayName = 'الضيف',
   }) {
     const h2h = h2hPillar(h2hGames, homeId, awayId, overlapByGame);
-    const fH = formPillar(homeForm, homeId, { oppStrength, kickoff, venue: neutralSite ? null : 'home' });
-    const fA = formPillar(awayForm, awayId, { oppStrength, kickoff, venue: neutralSite ? null : 'away' });
+    const fH = formPillar(homeForm, homeId, { oppStrength, strengthOf, kickoff, venue: neutralSite ? null : 'home' });
+    const fA = formPillar(awayForm, awayId, { oppStrength, strengthOf, kickoff, venue: neutralSite ? null : 'away' });
     const sH = squadPillar(homeRoster, homeInjuries);
     const sA = squadPillar(awayRoster, awayInjuries);
     const market = parseMarketOdds(pickcenter);
@@ -267,15 +286,35 @@ const Engine = (() => {
     pDraw = 0.62 * pDraw + 0.38 * mx.pD;
     pAway = 0.62 * pAway + 0.38 * mx.pAW;
 
-    // دمج رأي السوق (العمود الرابع) — السوق أدق متنبئ متاح فبناخد رأيه بجدية
-    let marketAgreement = null;
+    // دمج تقييم Elo — مقياس قوة موحد بيتبني من كل النتايج، وبيحل مشكلة
+    // مقارنة فرق من دوريات مختلفة. وزنه بيزيد كل ما عدد ماتشات الفريقين المتسجلة يزيد
+    let eloInfo = null;
+    if (elo?.home && elo?.away) {
+      const rel = Math.min(elo.home.n || 0, elo.away.n || 0);
+      eloInfo = { home: Math.round(elo.home.r), away: Math.round(elo.away.r), games: rel, weight: 0 };
+      if (rel >= 4) {
+        const dElo = elo.home.r - elo.away.r + (neutralSite ? 0 : 60);
+        const pE = 1 / (1 + Math.pow(10, -dElo / 400));
+        const pDrawE = clamp(0.30 * Math.exp(-Math.abs(dElo) / 220), 0.14, 0.30);
+        const wE = 0.35 * rel / (rel + 10);
+        pHome = (1 - wE) * pHome + wE * pE * (1 - pDrawE);
+        pAway = (1 - wE) * pAway + wE * (1 - pE) * (1 - pDrawE);
+        pDraw = (1 - wE) * pDraw + wE * pDrawE;
+        eloInfo.weight = wE;
+      }
+    }
+
+    // دمج رأي السوق (العمود الرابع) — وزنه بيتعلم من النتايج:
+    // لو السوق بيكسب نموذجنا في الخلافات وزنه بيزيد، والعكس صحيح
+    let marketAgreement = null, modelPick = null, marketPick = null;
+    const mw = clamp(marketWeight, 0.30, 0.60);
     if (market) {
-      const ourPick = pHome >= pAway && pHome >= pDraw ? 'H' : pAway >= pDraw ? 'A' : 'D';
-      const mktPick = market.pH >= market.pA && market.pH >= market.pD ? 'H' : market.pA >= market.pD ? 'A' : 'D';
-      marketAgreement = ourPick === mktPick;
-      pHome = 0.55 * pHome + 0.45 * market.pH;
-      pDraw = 0.55 * pDraw + 0.45 * market.pD;
-      pAway = 0.55 * pAway + 0.45 * market.pA;
+      modelPick = pHome >= pAway && pHome >= pDraw ? 'H' : pAway >= pDraw ? 'A' : 'D';
+      marketPick = market.pH >= market.pA && market.pH >= market.pD ? 'H' : market.pA >= market.pD ? 'A' : 'D';
+      marketAgreement = modelPick === marketPick;
+      pHome = (1 - mw) * pHome + mw * market.pH;
+      pDraw = (1 - mw) * pDraw + mw * market.pD;
+      pAway = (1 - mw) * pAway + mw * market.pA;
     }
     const sum1x2 = pHome + pDraw + pAway;
     pHome /= sum1x2; pDraw /= sum1x2; pAway /= sum1x2;
@@ -294,10 +333,11 @@ const Engine = (() => {
     if (sH.available && sA.available) quality += 0.08;
     if (overlapByGame && Object.keys(overlapByGame).length) quality += 0.05;
     if (market) quality += 0.11;
-    if (Object.keys(oppStrength).length) quality += 0.04;
+    if (Object.keys(oppStrength).length || strengthOf) quality += 0.04;
+    if (eloInfo?.weight) quality += 0.04;
     quality = clamp(quality, 0.3, 1);
 
-    const confOf = (p, agreeBonus = 0) => calibrate(Math.round(clamp((0.72 * p + 0.28 * quality) * 100 + agreeBonus, 5, 96)), calib);
+    const confOf = (p, mkt, agreeBonus = 0) => calibrate(Math.round(clamp((0.72 * p + 0.28 * quality) * 100 + agreeBonus, 5, 96)), calib, mkt);
 
     // مكافأة/خصم اتفاق السوق على أسواق النتيجة
     const agreeAdj = marketAgreement === true ? 3 : marketAgreement === false ? -5 : 0;
@@ -313,22 +353,22 @@ const Engine = (() => {
       { code: 'X2', label: `فوز أو تعادل ${awayName}`, p: pAway + pDraw, mkt: market ? market.pA + market.pD : null },
       { code: '12', label: 'لا تعادل (أي فريق يكسب)', p: pHome + pAway, mkt: market ? market.pH + market.pA : null },
     ].sort((a, b) => b.p - a.p);
-    markets.push({ market: 'DC', marketLabel: 'فرصة مزدوجة', pick: dcOpts[0].code, pickLabel: dcOpts[0].label, prob: dcOpts[0].p, mkt: dcOpts[0].mkt, conf: confOf(dcOpts[0].p, agreeAdj), value: valueOf(dcOpts[0].p, dcOpts[0].mkt) });
+    markets.push({ market: 'DC', marketLabel: 'فرصة مزدوجة', pick: dcOpts[0].code, pickLabel: dcOpts[0].label, prob: dcOpts[0].p, mkt: dcOpts[0].mkt, conf: confOf(dcOpts[0].p, 'DC', agreeAdj), value: valueOf(dcOpts[0].p, dcOpts[0].mkt) });
 
     // خطوط الأهداف
     const ouMain = pOver25 >= 0.5
       ? { code: 'O', label: 'أكثر من 2.5 هدف', p: pOver25, mkt: market?.ou && Math.abs(market.ou.line - 2.5) < 0.01 ? market.ou.pOver : null }
       : { code: 'U', label: 'أقل من 2.5 هدف', p: pUnder25, mkt: market?.ou && Math.abs(market.ou.line - 2.5) < 0.01 ? market.ou.pUnder : null };
-    markets.push({ market: 'OU25', marketLabel: 'خط 2.5 هدف', pick: ouMain.code, pickLabel: ouMain.label, prob: ouMain.p, mkt: ouMain.mkt, conf: confOf(ouMain.p), value: valueOf(ouMain.p, ouMain.mkt) });
+    markets.push({ market: 'OU25', marketLabel: 'خط 2.5 هدف', pick: ouMain.code, pickLabel: ouMain.label, prob: ouMain.p, mkt: ouMain.mkt, conf: confOf(ouMain.p, 'OU25'), value: valueOf(ouMain.p, ouMain.mkt) });
 
-    if (mx.pO15 >= 0.78) markets.push({ market: 'OU15', marketLabel: 'خط 1.5 هدف', pick: 'O', pickLabel: 'أكثر من 1.5 هدف', prob: mx.pO15, conf: confOf(mx.pO15), value: null });
-    if ((1 - mx.pO35) >= 0.78) markets.push({ market: 'OU35', marketLabel: 'خط 3.5 هدف', pick: 'U', pickLabel: 'أقل من 3.5 هدف', prob: 1 - mx.pO35, conf: confOf(1 - mx.pO35), value: null });
+    if (mx.pO15 >= 0.78) markets.push({ market: 'OU15', marketLabel: 'خط 1.5 هدف', pick: 'O', pickLabel: 'أكثر من 1.5 هدف', prob: mx.pO15, conf: confOf(mx.pO15, 'OU15'), value: null });
+    if ((1 - mx.pO35) >= 0.78) markets.push({ market: 'OU35', marketLabel: 'خط 3.5 هدف', pick: 'U', pickLabel: 'أقل من 3.5 هدف', prob: 1 - mx.pO35, conf: confOf(1 - mx.pO35, 'OU35'), value: null });
 
     // تسجيل الفريقين
     const bttsPick = pBTTS >= 0.5
       ? { code: 'Y', label: 'الفريقين يسجلوا', p: pBTTS }
       : { code: 'N', label: 'مش هيسجلوا مع بعض', p: 1 - pBTTS };
-    markets.push({ market: 'BTTS', marketLabel: 'تسجيل الفريقين', pick: bttsPick.code, pickLabel: bttsPick.label, prob: bttsPick.p, conf: confOf(bttsPick.p), value: null });
+    markets.push({ market: 'BTTS', marketLabel: 'تسجيل الفريقين', pick: bttsPick.code, pickLabel: bttsPick.label, prob: bttsPick.p, conf: confOf(bttsPick.p, 'BTTS'), value: null });
 
     // نتيجة الماتش
     const oneXtwo = [
@@ -336,11 +376,11 @@ const Engine = (() => {
       { code: 'D', label: 'تعادل', p: pDraw, mkt: market?.pD },
       { code: 'A', label: `فوز ${awayName}`, p: pAway, mkt: market?.pA },
     ].sort((a, b) => b.p - a.p);
-    markets.push({ market: '1X2', marketLabel: 'نتيجة الماتش', pick: oneXtwo[0].code, pickLabel: oneXtwo[0].label, prob: oneXtwo[0].p, mkt: oneXtwo[0].mkt ?? null, conf: confOf(oneXtwo[0].p, agreeAdj), value: valueOf(oneXtwo[0].p, oneXtwo[0].mkt) });
+    markets.push({ market: '1X2', marketLabel: 'نتيجة الماتش', pick: oneXtwo[0].code, pickLabel: oneXtwo[0].label, prob: oneXtwo[0].p, mkt: oneXtwo[0].mkt ?? null, conf: confOf(oneXtwo[0].p, '1X2', agreeAdj), value: valueOf(oneXtwo[0].p, oneXtwo[0].mkt) });
 
     // النتيجة بالظبط (احتمالها صغير بطبيعتها — للاستئناس والجرأة)
     const ts = mx.topScores[0];
-    if (ts) markets.push({ market: 'CS', marketLabel: 'النتيجة بالظبط', pick: `${ts.h}-${ts.a}`, pickLabel: `النتيجة ${ts.h} - ${ts.a}`, prob: ts.p, conf: confOf(ts.p), value: null });
+    if (ts) markets.push({ market: 'CS', marketLabel: 'النتيجة بالظبط', pick: `${ts.h}-${ts.a}`, pickLabel: `النتيجة ${ts.h} - ${ts.a}`, prob: ts.p, conf: confOf(ts.p, 'CS'), value: null });
 
     markets.sort((a, b) => b.conf - a.conf);
 
@@ -354,7 +394,8 @@ const Engine = (() => {
 
     return {
       pillars: { h2h, form: { home: fH, away: fA }, squad: { home: sH, away: sA } },
-      market, marketAgreement,
+      market, marketAgreement, modelPick, marketPick, marketWeightUsed: mw,
+      eloInfo,
       weightsUsed: w,
       strength: { home: Math.round(strengthHome), away: Math.round(strengthAway) },
       rest: { home: fH.rest, away: fA.rest, adjHome: restH, adjAway: restA },

@@ -379,7 +379,12 @@ html.locked .topbar, html.locked main, html.locked .foot { display: none !import
 @keyframes shake { 25% { transform: translateX(6px); } 50% { transform: translateX(-6px); } 75% { transform: translateX(4px); } }
 
 @media (max-width: 640px) {
-  .topbar { padding: 14px 16px; }
+  /* الهيدر عمودي ومش لاصق — عشان الأزرار الكتير ماتبوظش التخطيط */
+  .topbar { position: static; flex-direction: column; align-items: stretch; gap: 12px; padding: 14px 12px; }
+  .brand { justify-content: center; text-align: center; }
+  .brand h1 { font-size: 20px; }
+  .nav { flex-wrap: wrap; justify-content: center; gap: 6px; }
+  .nav-btn { font-size: 13px; padding: 8px 12px; }
   main { padding: 16px 12px 50px; }
   .modal-card { padding: 20px 16px; }
   .prob-seg { min-width: 44px; }

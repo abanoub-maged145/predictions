@@ -398,6 +398,22 @@ async function loadLeagueFixtures(code) {
 // فهرس آخر التحليلات المحفوظة عشان الكروت تفتكرها بعد قفل الصفحة
 function refreshAutologIndex() {
   state.autologByEvent = Object.fromEntries(store.get(autologKey(), []).map(r => [r.id, r]));
+  state.anCacheByEvent = store.get(anCacheKey(), { order: [], items: {} }).items;
+}
+
+// كاش عرض التحليلات: أي ماتش اتحلل بيفتكر آخر تحليل كامل ليه (للعرض بس —
+// مش بيدخل في التعلم). مفيد للماتشات اللي خلصت أو لما النت يفصل
+const anCacheKey = () => nsKey('predictor_ancache_v1');
+function loadAnCache(id) {
+  const c = store.get(anCacheKey(), { order: [], items: {} });
+  return c.items[id] || null;
+}
+function saveAnCache(id, a) {
+  const c = store.get(anCacheKey(), { order: [], items: {} });
+  if (!c.items[id]) c.order.push(id);
+  c.items[id] = { ts: Date.now(), a };
+  while (c.order.length > 60) delete c.items[c.order.shift()];
+  try { store.set(anCacheKey(), c); } catch { /* المساحة اتملت — عادي */ }
 }
 
 function renderLeagueMatches() {
@@ -524,9 +540,10 @@ function matchCard(m) {
   const isDone = m.state === 'post';
   const card = el('article', 'match-card' + (isLive ? ' live' : ''));
   const a = state.analysisCache[m.id];
-  // لو مفيش تحليل في الجلسة دي، هات آخر تحليل محفوظ من السجل التلقائي
-  const saved = !a ? state.autologByEvent?.[m.id]?.best : null;
-  const best = a ? a.best : (saved?.label ? { pickLabel: saved.label, conf: saved.conf } : null);
+  // لو مفيش تحليل في الجلسة دي، هات آخر تحليل محفوظ (السجل التلقائي أو كاش العرض)
+  const saved = !a ? (state.autologByEvent?.[m.id]?.best || state.anCacheByEvent?.[m.id]?.a?.best) : null;
+  const savedLabel = saved?.label || saved?.pickLabel;
+  const best = a ? a.best : (savedLabel ? { pickLabel: savedLabel, conf: saved.conf } : null);
   const badge = best ? `<span class="conf-badge ${confClass(best.conf)}">${best.conf}%</span>` : '';
   card.innerHTML = `
     <div class="mc-top">
@@ -612,6 +629,7 @@ async function getAnalysis(m, { withOverlap = true } = {}) {
 
   // السجل التلقائي: كل توقع لماتش لسه مبدأش بيتسجل عشان التعلم الذاتي
   if (m.state === 'pre') autolog(m, analysis);
+  saveAnCache(m.id, analysis); // كاش العرض — لأي ماتش مهما كانت حالته
   return analysis;
 }
 
@@ -686,19 +704,34 @@ async function computeOverlap(m, recentH2h, currentSummary) {
   return out;
 }
 
-async function openAnalysis(m) {
+async function openAnalysis(m, { fresh = false } = {}) {
   const modal = $('#modal');
   const body = $('#modal-body');
   modal.classList.remove('hidden');
+
+  // ماتش خلص أو شغال: اعرض آخر تحليل محفوظ فوراً (بزرار «حلل من جديد») —
+  // الماتشات الجاية بتتحلل طازة دايماً لأن الأسعار والتشكيلات بتتغير
+  if (!fresh && m.state !== 'pre' && !state.analysisCache[m.id]) {
+    const cached = loadAnCache(m.id);
+    if (cached) { renderAnalysisBody(m, cached.a, cached.ts); return; }
+  }
+
   body.innerHTML = '<div class="loading-block"><div class="spinner"></div><p>بحلل الماتش: مواجهات، فورمة، تشكيلات، ترتيب، وأسعار السوق…</p></div>';
 
   let a;
   try { a = await getAnalysis(m); }
   catch (e) {
+    const cached = loadAnCache(m.id);
+    if (cached) { renderAnalysisBody(m, cached.a, cached.ts, '⚠️ الشبكة مش راضية — ده آخر تحليل محفوظ'); return; }
     body.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><h3>معرفتش أجيب بيانات الماتش ده</h3><p>${escapeHtml(e.message)}</p></div>`;
     return;
   }
 
+  renderAnalysisBody(m, a, null);
+}
+
+function renderAnalysisBody(m, a, cachedTs, cacheNote) {
+  const body = $('#modal-body');
   const p = a.pillars;
   const seqBadges = seq => seq.slice(0, 6).map(r => `<span class="form-b form-${r}">${r === 'W' ? 'ف' : r === 'D' ? 'ت' : 'خ'}</span>`).join('');
   const ovDetail = p.h2h.detail.filter(d => d.overlap != null);
@@ -708,6 +741,11 @@ async function openAnalysis(m) {
   const top3 = (a.topScores || []).slice(0, 3).map(s => `<b>${s.h} - ${s.a}</b> (${Math.round(s.p * 100)}%)`).join(' · ');
 
   body.innerHTML = `
+    ${cachedTs ? `
+    <div class="cached-note">
+      <span>📌 ${cacheNote || `تحليل محفوظ من ${new Date(cachedTs).toLocaleString('ar-EG', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}${m.state !== 'pre' ? ' (قبل/أثناء الماتش)' : ''}`}</span>
+      <button id="btn-reanalyze" class="save-btn">🔄 حلل من جديد</button>
+    </div>` : ''}
     <div class="an-header">
       <div class="an-team"><img src="${m.home.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.home.name)}</h3><button class="fav-btn" data-side="home" title="إضافة لفرقك المفضلة">${isFav(m.home.id) ? '⭐' : '☆'}</button></div>
       <div class="an-vs">
@@ -776,6 +814,9 @@ async function openAnalysis(m) {
     <p class="preds-hint">الاحتمال = فرصة حدوث التوقع · الشارة الملونة = ثقة النظام (الاحتمال + جودة البيانات + المعايرة الذاتية) · 💎 = نظامنا شايف قيمة أعلى من سعر السوق</p>
     <div class="preds" id="preds-list"></div>
   `;
+
+  const reBtn = body.querySelector('#btn-reanalyze');
+  if (reBtn) reBtn.onclick = () => openAnalysis(m, { fresh: true });
 
   body.querySelectorAll('.fav-btn').forEach(b => b.onclick = ev => {
     ev.stopPropagation();

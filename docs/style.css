@@ -459,3 +459,11 @@ html.locked .topbar, html.locked main, html.locked .foot { display: none !import
 /* رأس أضمن الاختيارات مع زرار المشاركة */
 .tp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .tp-head .tp-title { margin-bottom: 0; }
+
+/* لافتة التحليل المحفوظ */
+.cached-note {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  background: rgba(245, 185, 66, .08); border: 1px solid rgba(245, 185, 66, .3);
+  border-radius: 10px; padding: 9px 12px; margin-bottom: 14px;
+  font-size: 13px; color: var(--muted);
+}

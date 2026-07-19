@@ -30,6 +30,105 @@ const json = (obj, status = 200, extra = {}) =>
 // فك ترميز \x7B... اللي Understat بيحط بيه الداتا جوه الصفحة
 const decodeHex = s => s.replace(/\\x([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
+// أسماء الدوريات زي ما بتظهر في اختيارات صفحة Understat
+const UNDERSTAT_NAME = { EPL: 'EPL', La_liga: 'La liga', Serie_A: 'Serie A', Bundesliga: 'Bundesliga', Ligue_1: 'Ligue 1' };
+
+// فهم مرن لأي صيغة رد: بندور على قايمة فرق فيها اسم + تاريخ ماتشات أو إجماليات xG
+function collectTeamArrays(node, depth = 0, out = []) {
+  if (!node || typeof node !== 'object' || depth > 4) return out;
+  const arr = Array.isArray(node) ? node : Object.values(node);
+  if (arr.length >= 6 && arr.every(t => t && typeof t === 'object' && (t.title || t.name || t.team_name))) {
+    out.push(arr);
+    return out;
+  }
+  for (const v of arr) collectTeamArrays(v, depth + 1, out);
+  return out;
+}
+function teamsFrom(j) {
+  for (const arr of collectTeamArrays(j)) {
+    const teams = arr.map(t => {
+      const name = t.title || t.name || t.team_name;
+      const hist = Array.isArray(t.history) ? t.history : null;
+      if (hist && hist.length) {
+        const n = hist.length;
+        const sum = k => hist.reduce((s, g) => s + (parseFloat(g[k]) || 0), 0);
+        return { name, n, xg: +(sum('xG') / n).toFixed(2), xga: +(sum('xGA') / n).toFixed(2) };
+      }
+      const n = parseInt(t.matches ?? t.M ?? t.games, 10);
+      const xg = parseFloat(t.xG ?? t.xg), xga = parseFloat(t.xGA ?? t.xga);
+      if (n > 0 && !isNaN(xg) && !isNaN(xga)) return { name, n, xg: +(xg / n).toFixed(2), xga: +(xga / n).toFixed(2) };
+      return null;
+    }).filter(t => t && t.name && t.n >= 3);
+    if (teams.length >= 6) return teams;
+  }
+  return null;
+}
+
+// الاكتشاف الذاتي: نقرا ملف league.min.js بتاعهم، نطلع منه أسماء نقط البيانات،
+// ونجربها POST وGET لحد ما واحدة ترجع قايمة فرق مفهومة
+async function discoverTeams(slug, { verbose = false } = {}) {
+  const pageRes = await fetch(`https://understat.com/league/${slug}`, { headers: BROWSER_HEADERS });
+  const page = await pageRes.text();
+
+  // القديمة: البيانات جوه الصفحة نفسها
+  const inline = page.match(/teamsData\s*=\s*JSON\.parse\('([^']+)'\)/) || page.match(/teamsData\s*=\s*JSON\.parse\("([^"]+)"\)/);
+  if (inline) {
+    const teams = teamsFrom(JSON.parse(decodeHex(inline[1])));
+    if (teams) return { teams, endpoint: 'inline-teamsData', tried: [] };
+  }
+
+  const season = (page.match(/name="season"[\s\S]{0,400}?value="(\d{4})"\s+selected/) || [])[1] || String(new Date().getFullYear());
+  const leagueName = UNDERSTAT_NAME[slug] || slug.replace(/_/g, ' ');
+
+  // مرشحين من ملف الجافاسكريبت بتاعهم + تخمينات معقولة
+  const candidates = new Set();
+  const jsSrc = (page.match(/src=["']([^"']*league[^"']*\.js[^"']*)["']/i) || [])[1];
+  let jsSnippets = [];
+  if (jsSrc) {
+    try {
+      const js = await (await fetch(new URL(jsSrc, 'https://understat.com/').href, { headers: { ...BROWSER_HEADERS, 'Accept': '*/*' } })).text();
+      for (const m of js.matchAll(/["']([A-Za-z0-9_\-/.]{3,50}(?:get|Get|data|Data|teams|Teams|stats|Stats)[A-Za-z0-9_\-/.]{0,40})["']/g)) {
+        if (!/\.(js|css|png|svg|html)/.test(m[1])) candidates.add(m[1].replace(/^\//, ''));
+      }
+      if (verbose) {
+        for (const m of js.matchAll(/\$\.(ajax|post|get|getJSON)\s*\(/g)) {
+          jsSnippets.push(js.slice(Math.max(0, m.index - 60), m.index + 500));
+          if (jsSnippets.length >= 5) break;
+        }
+      }
+    } catch { /* الملف مش متاح */ }
+  }
+  for (const c of ['league/getTeams', 'main/getLeagueTeams', 'main/getTeamsStats', 'getLeagueTeams', 'league/getTeamsData']) candidates.add(c);
+
+  const tried = [];
+  for (const cand of [...candidates].slice(0, 12)) {
+    for (const method of ['POST', 'GET']) {
+      try {
+        const target = method === 'GET'
+          ? `https://understat.com/${cand}?league=${encodeURIComponent(leagueName)}&season=${season}`
+          : `https://understat.com/${cand}`;
+        const res = await fetch(target, {
+          method,
+          headers: {
+            ...BROWSER_HEADERS,
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': `https://understat.com/league/${slug}`,
+            ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' } : {}),
+          },
+          body: method === 'POST' ? `league=${encodeURIComponent(leagueName)}&season=${season}` : undefined,
+        });
+        const text = await res.text();
+        if (verbose) tried.push({ url: `${method} /${cand}`, status: res.status, sample: text.slice(0, 300) });
+        if (!res.ok) continue;
+        const teams = teamsFrom(JSON.parse(text));
+        if (teams) return { teams, endpoint: `${method} /${cand}`, tried, jsSnippets };
+      } catch { if (verbose) tried.push({ url: `${method} /${cand}`, status: 'err' }); }
+    }
+  }
+  return { teams: null, endpoint: null, tried, jsSnippets, pageLength: page.length };
+}
+
 async function xgHandler(url) {
   const league = url.searchParams.get('league');
   const slug = UNDERSTAT[league];
@@ -43,46 +142,13 @@ async function xgHandler(url) {
     if (hit) return hit;
   }
 
-  // هيدرز متصفح كاملة — Understat بيرفض الطلبات اللي شكلها مش متصفح حقيقي
-  const res = await fetch(`https://understat.com/league/${slug}`, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': 'https://understat.com/',
-      'Upgrade-Insecure-Requests': '1',
-    },
-  });
-  if (!res.ok) return json({ error: 'understat http ' + res.status }, 502);
-  const html = await res.text();
-  // بندور على teamsData بأي صيغة اقتباس
-  const m = html.match(/teamsData\s*=\s*JSON\.parse\('([^']+)'\)/) ||
-            html.match(/teamsData\s*=\s*JSON\.parse\("([^"]+)"\)/);
-  if (!m) {
-    // تشخيص: نرجع عنوان الصفحة اللي رجعت عشان نعرف هي صفحة حماية ولا الشكل اتغير
-    const title = (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '';
-    return json({
-      error: 'understat blocked or format changed',
-      pageTitle: title.trim().slice(0, 120),
-      pageLength: html.length,
-      hasTeamsWord: html.includes('teamsData'),
-    }, 502);
+  // الاكتشاف الذاتي: بيقرا صفحة Understat وملف league.min.js ويلاقي نقطة البيانات لوحده
+  const { teams, endpoint } = await discoverTeams(slug);
+  if (!teams) {
+    return json({ error: 'معرفناش نجيب بيانات xG — Understat غيّر مكان البيانات. جرّب /xg-debug?league=' + league + '&verbose=1' }, 502);
   }
 
-  const data = JSON.parse(decodeHex(m[1]));
-  const teams = Object.values(data).map(t => {
-    const hist = t.history || [];
-    const n = hist.length;
-    const sum = k => hist.reduce((s, g) => s + (parseFloat(g[k]) || 0), 0);
-    return {
-      name: t.title,
-      n,
-      xg: n ? +(sum('xG') / n).toFixed(2) : null,   // أهداف متوقعة لصالحه لكل ماتش
-      xga: n ? +(sum('xGA') / n).toFixed(2) : null, // أهداف متوقعة عليه لكل ماتش
-    };
-  }).filter(t => t.n >= 3);
-
-  const out = json({ league, source: 'understat', fetchedAt: new Date().toISOString(), teams },
+  const out = json({ league, source: 'understat', endpoint, fetchedAt: new Date().toISOString(), teams },
     200, { 'Cache-Control': 's-maxage=21600' });
   if (cache) await cache.put(cacheKey, out.clone());
   return out;
@@ -106,6 +172,18 @@ async function xgDebug(url) {
     return json({ status: res.status, type: res.headers.get('content-type'), length: text.length, sample: text.slice(0, 1500) });
   }
   const slug = UNDERSTAT[url.searchParams.get('league')] || 'EPL';
+
+  // وضع verbose: شغّل الاكتشاف الذاتي وورّي كل نقطة اتجربت ورجعت إيه
+  if (url.searchParams.get('verbose')) {
+    const r = await discoverTeams(slug, { verbose: true });
+    return json({
+      found: !!r.teams, endpoint: r.endpoint,
+      teamsCount: r.teams?.length || 0,
+      sampleTeam: r.teams?.[0] || null,
+      jsSnippets: r.jsSnippets, tried: r.tried, pageLength: r.pageLength,
+    });
+  }
+
   const res = await fetch(`https://understat.com/league/${slug}`, { headers: BROWSER_HEADERS });
   const html = await res.text();
 

@@ -1,0 +1,13 @@
+# إعدادات نشر سيرفر المُتنبئ تلقائياً من GitHub (Cloudflare Workers Builds)
+# ------------------------------------------------------------------
+# مهم: استبدل قيمة id تحت بمعرّف مخزن الـ KV بتاعك (PREDICTOR)
+# بتلاقيه في: Storage & databases → KV → اضغط PREDICTOR → Namespace ID
+name = "predictor"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# نفس مخزن المزامنة المربوط دلوقتي — لازم الـ id يكون صح
+# عشان المزامنة متتكسرش بعد أول نشر تلقائي
+kv_namespaces = [
+  { binding = "KV", id = "PASTE_KV_NAMESPACE_ID_HERE" }
+]

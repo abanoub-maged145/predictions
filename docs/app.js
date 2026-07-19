@@ -592,7 +592,7 @@ async function openAnalysis(m) {
   const ovAvg = ovDetail.length ? Math.round(ovDetail.reduce((s, d) => s + d.overlap, 0) / ovDetail.length * 100) : null;
   const restTxt = f => f.rest == null ? '' : `راحة ${f.rest} يوم${f.congestion >= 5 ? ' · جدول مضغوط ⚠️' : ''}`;
   const venueTxt = (f, label) => f.venueScore != null ? ` · ${label}: ${f.venueScore}` : '';
-  const topScore = a.topScores?.[0];
+  const top3 = (a.topScores || []).slice(0, 3).map(s => `<b>${s.h} - ${s.a}</b> (${Math.round(s.p * 100)}%)`).join(' · ');
 
   body.innerHTML = `
     <div class="an-header">
@@ -630,7 +630,7 @@ async function openAnalysis(m) {
         <p class="pillar-note">
           ${escapeHtml(m.home.name)}: ${restTxt(p.form.home)}${venueTxt(p.form.home, 'في أرضه')}<br>
           ${escapeHtml(m.away.name)}: ${restTxt(p.form.away)}${venueTxt(p.form.away, 'خارج أرضه')}<br>
-          أهداف متوقعة: ${a.expGoals.home.toFixed(1)} - ${a.expGoals.away.toFixed(1)}${topScore ? ` · النتيجة الأكثر احتمالاً: <b>${topScore.h} - ${topScore.a}</b> (${Math.round(topScore.p * 100)}%)` : ''}
+          أهداف متوقعة: ${a.expGoals.home.toFixed(1)} - ${a.expGoals.away.toFixed(1)}${top3 ? `<br>أكثر 3 نتايج احتمالاً: ${top3}` : ''}
         </p>
       </div>
 

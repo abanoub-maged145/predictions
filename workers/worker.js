@@ -88,6 +88,50 @@ async function xgHandler(url) {
   return out;
 }
 
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://understat.com/',
+};
+
+// أداة استكشاف: Understat غيّروا تصميمهم والبيانات بقت بتيجي من API منفصل —
+// النقطة دي بتفتش صفحتهم وملفات الجافاسكريبت بتاعتهم عن مسارات الـ API
+async function xgDebug(url) {
+  const path = url.searchParams.get('path');
+  if (path) {
+    // جرّب مسار معين على understat.com وشوف بيرجع إيه
+    const res = await fetch(`https://understat.com${path}`, { headers: { ...BROWSER_HEADERS, 'Accept': '*/*', 'X-Requested-With': 'XMLHttpRequest' } });
+    const text = await res.text();
+    return json({ status: res.status, type: res.headers.get('content-type'), length: text.length, sample: text.slice(0, 1500) });
+  }
+  const slug = UNDERSTAT[url.searchParams.get('league')] || 'EPL';
+  const res = await fetch(`https://understat.com/league/${slug}`, { headers: BROWSER_HEADERS });
+  const html = await res.text();
+  const scripts = [...html.matchAll(/<script[^>]*src=["']([^"']+)["']/g)].map(m => m[1]);
+
+  // نزّل أول ملفات جافاسكريبت وفتشها عن مسارات فيها api/league/team/stat
+  const apiPaths = new Set();
+  const grab = text => {
+    for (const m of text.matchAll(/["'`](\/[A-Za-z0-9_\-./?=&{}$]{3,90})["'`]/g)) {
+      if (/api|league|team|stat|match|getl|getp/i.test(m[1])) apiPaths.add(m[1]);
+    }
+  };
+  grab(html);
+  for (const src of scripts.filter(s => s.startsWith('/') || s.includes('understat')).slice(0, 4)) {
+    try {
+      const js = await fetch(src.startsWith('/') ? `https://understat.com${src}` : src, { headers: { ...BROWSER_HEADERS, 'Accept': '*/*' } });
+      grab(await js.text());
+    } catch { /* تجاهل */ }
+  }
+  return json({
+    status: res.status, length: html.length,
+    scripts: scripts.slice(0, 15),
+    apiPaths: [...apiPaths].slice(0, 60),
+    sample: html.slice(0, 900),
+  });
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -95,6 +139,7 @@ export default {
     try {
       if (url.pathname === '/') return json({ ok: true, service: 'predictor-worker', kv: !!env.KV });
       if (url.pathname === '/xg') return await xgHandler(url);
+      if (url.pathname === '/xg-debug') return await xgDebug(url);
 
       const m = url.pathname.match(/^\/sync\/([0-9a-f]{10})$/);
       if (m) {

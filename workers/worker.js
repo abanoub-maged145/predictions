@@ -43,13 +43,31 @@ async function xgHandler(url) {
     if (hit) return hit;
   }
 
+  // هيدرز متصفح كاملة — Understat بيرفض الطلبات اللي شكلها مش متصفح حقيقي
   const res = await fetch(`https://understat.com/league/${slug}`, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; predictor-app)' },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://understat.com/',
+      'Upgrade-Insecure-Requests': '1',
+    },
   });
   if (!res.ok) return json({ error: 'understat http ' + res.status }, 502);
   const html = await res.text();
-  const m = html.match(/teamsData\s*=\s*JSON\.parse\('([^']+)'\)/);
-  if (!m) return json({ error: 'understat format changed' }, 502);
+  // بندور على teamsData بأي صيغة اقتباس
+  const m = html.match(/teamsData\s*=\s*JSON\.parse\('([^']+)'\)/) ||
+            html.match(/teamsData\s*=\s*JSON\.parse\("([^"]+)"\)/);
+  if (!m) {
+    // تشخيص: نرجع عنوان الصفحة اللي رجعت عشان نعرف هي صفحة حماية ولا الشكل اتغير
+    const title = (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '';
+    return json({
+      error: 'understat blocked or format changed',
+      pageTitle: title.trim().slice(0, 120),
+      pageLength: html.length,
+      hasTeamsWord: html.includes('teamsData'),
+    }, 502);
+  }
 
   const data = JSON.parse(decodeHex(m[1]));
   const teams = Object.values(data).map(t => {

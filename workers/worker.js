@@ -1,0 +1,103 @@
+// ============================================================
+// سيرفر المُتنبئ — Cloudflare Worker
+// بيقدم للموقع حاجتين مش ممكنين من المتصفح مباشرة:
+//   1) /xg?league=eng.1  → بيانات xG (الأهداف المتوقعة من جودة الفرص)
+//      لفرق الدوريات الخمسة الكبار من Understat — بكاش 6 ساعات
+//   2) /sync/<id>        → مزامنة تلقائية لبيانات المستخدمين (GET/PUT)
+//      البيانات بتوصل مشفرة AES-GCM من المتصفح — السيرفر مبيشوفش محتواها
+//
+// النشر: الصق الملف ده في محرر الـ Worker على dash.cloudflare.com
+// واربط KV namespace باسم "KV" من الإعدادات (للمزامنة بس — الـ xG شغال من غيرها)
+// ============================================================
+
+const UNDERSTAT = {
+  'eng.1': 'EPL',
+  'esp.1': 'La_liga',
+  'ita.1': 'Serie_A',
+  'ger.1': 'Bundesliga',
+  'fra.1': 'Ligue_1',
+};
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET,PUT,OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+const json = (obj, status = 200, extra = {}) =>
+  new Response(JSON.stringify(obj), { status, headers: { ...CORS, 'Content-Type': 'application/json', ...extra } });
+
+// فك ترميز \x7B... اللي Understat بيحط بيه الداتا جوه الصفحة
+const decodeHex = s => s.replace(/\\x([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+
+async function xgHandler(url) {
+  const league = url.searchParams.get('league');
+  const slug = UNDERSTAT[league];
+  if (!slug) return json({ error: 'league not supported', supported: Object.keys(UNDERSTAT) }, 400);
+
+  // كاش 6 ساعات — بيانات xG الموسمية مش بتتغير غير بعد الجولات
+  const cacheKey = new Request(`https://cache.predictor/xg/${slug}`);
+  const cache = globalThis.caches?.default;
+  if (cache) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+  }
+
+  const res = await fetch(`https://understat.com/league/${slug}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; predictor-app)' },
+  });
+  if (!res.ok) return json({ error: 'understat http ' + res.status }, 502);
+  const html = await res.text();
+  const m = html.match(/teamsData\s*=\s*JSON\.parse\('([^']+)'\)/);
+  if (!m) return json({ error: 'understat format changed' }, 502);
+
+  const data = JSON.parse(decodeHex(m[1]));
+  const teams = Object.values(data).map(t => {
+    const hist = t.history || [];
+    const n = hist.length;
+    const sum = k => hist.reduce((s, g) => s + (parseFloat(g[k]) || 0), 0);
+    return {
+      name: t.title,
+      n,
+      xg: n ? +(sum('xG') / n).toFixed(2) : null,   // أهداف متوقعة لصالحه لكل ماتش
+      xga: n ? +(sum('xGA') / n).toFixed(2) : null, // أهداف متوقعة عليه لكل ماتش
+    };
+  }).filter(t => t.n >= 3);
+
+  const out = json({ league, source: 'understat', fetchedAt: new Date().toISOString(), teams },
+    200, { 'Cache-Control': 's-maxage=21600' });
+  if (cache) await cache.put(cacheKey, out.clone());
+  return out;
+}
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
+    try {
+      if (url.pathname === '/') return json({ ok: true, service: 'predictor-worker', kv: !!env.KV });
+      if (url.pathname === '/xg') return await xgHandler(url);
+
+      const m = url.pathname.match(/^\/sync\/([0-9a-f]{10})$/);
+      if (m) {
+        if (!env.KV) return json({ error: 'اربط KV namespace باسم KV من إعدادات الـ Worker الأول' }, 500);
+        const key = 'sync:' + m[1];
+        if (req.method === 'GET') {
+          const v = await env.KV.get(key);
+          return v
+            ? new Response(v, { headers: { ...CORS, 'Content-Type': 'application/json' } })
+            : json({ error: 'not found' }, 404);
+        }
+        if (req.method === 'PUT') {
+          const body = await req.text();
+          if (body.length > 2000000) return json({ error: 'too large' }, 413);
+          await env.KV.put(key, body);
+          return json({ ok: true });
+        }
+      }
+      return json({ error: 'not found' }, 404);
+    } catch (e) {
+      return json({ error: e.message }, 500);
+    }
+  },
+};

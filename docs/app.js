@@ -240,6 +240,47 @@ async function seedSharedElo() {
   } catch { /* مش متاح */ }
 }
 
+// ---------- بيانات xG من السيرفر (Cloudflare Worker) ----------
+// متاحة للدوريات الخمسة الكبار لما يكون فيه سيرفر مربوط (window.WORKER_URL)
+const XG_LEAGUES = new Set(['eng.1', 'esp.1', 'ita.1', 'ger.1', 'fra.1']);
+const workerUrl = () => (window.WORKER_URL || '').replace(/\/+$/, '');
+
+async function getXG(league) {
+  if (!workerUrl() || !XG_LEAGUES.has(league)) return null;
+  if (state.xgCache?.[league] !== undefined) return state.xgCache[league];
+  state.xgCache ??= {};
+  const CK = 'predictor_xg_' + league;
+  const cached = store.get(CK, null);
+  if (cached && Date.now() - cached.ts < 6 * 3600 * 1000) return (state.xgCache[league] = cached.teams);
+  try {
+    const res = await fetch(`${workerUrl()}/xg?league=${league}`);
+    if (!res.ok) throw new Error('http ' + res.status);
+    const data = await res.json();
+    store.set(CK, { ts: Date.now(), teams: data.teams });
+    return (state.xgCache[league] = data.teams);
+  } catch {
+    return (state.xgCache[league] = cached ? cached.teams : null); // نسخة قديمة أحسن من مفيش
+  }
+}
+
+// مطابقة اسم الفريق بين ESPN وUnderstat (الاسمين مش متطابقين حرفياً دايماً)
+const normTeamName = s => String(s || '').toLowerCase()
+  .replace(/\b(fc|cf|afc|ac|as|ssc|rc|sc|cd|ud|club|de|deportivo|calcio)\b/g, '')
+  .replace(/[^a-z]/g, '');
+function findXGTeam(teams, espnName) {
+  if (!teams) return null;
+  const target = normTeamName(espnName);
+  if (!target) return null;
+  let best = null;
+  for (const t of teams) {
+    const n = normTeamName(t.name);
+    if (!n) continue;
+    if (n === target) return t;
+    if ((n.includes(target) || target.includes(n)) && Math.min(n.length, target.length) >= 5) best = best || t;
+  }
+  return best;
+}
+
 // ---------- جلب ماتشات اليوم ----------
 async function loadMatches() {
   const grid = $('#matches-area');
@@ -516,9 +557,10 @@ const confLabel = c => c >= 75 ? 'ثقة عالية' : c >= 60 ? 'ثقة متو�
 async function getAnalysis(m, { withOverlap = true } = {}) {
   if (state.analysisCache[m.id]) return state.analysisCache[m.id];
 
-  const [summary, oppStrength] = await Promise.all([
+  const [summary, oppStrength, xgTable] = await Promise.all([
     fetchJSON(`${API}/${m.league}/summary?event=${m.id}`),
     getOppStrength(m.league),
+    getXG(m.league),
   ]);
   const h2hGames = (summary.headToHeadGames?.[0]?.events) || [];
 
@@ -557,6 +599,7 @@ async function getAnalysis(m, { withOverlap = true } = {}) {
     strengthOf,
     elo: { home: EloDB.get(m.home.id), away: EloDB.get(m.away.id) },
     adRates: { home: EloDB.get(m.home.id), away: EloDB.get(m.away.id) },
+    xgRates: xgTable ? { home: findXGTeam(xgTable, m.home.name), away: findXGTeam(xgTable, m.away.name) } : null,
     marketWeight: learned.mktW || 0.45,
     pickcenter: summary.pickcenter || summary.odds || null,
     learnedWeights: learned.weights,
@@ -700,7 +743,7 @@ async function openAnalysis(m) {
         <p class="pillar-note">
           ${escapeHtml(m.home.name)}: ${restTxt(p.form.home)}${venueTxt(p.form.home, 'في أرضه')}<br>
           ${escapeHtml(m.away.name)}: ${restTxt(p.form.away)}${venueTxt(p.form.away, 'خارج أرضه')}<br>
-          أهداف متوقعة: ${a.expGoals.home.toFixed(1)} - ${a.expGoals.away.toFixed(1)}${top3 ? `<br>أكثر 3 نتايج احتمالاً: ${top3}` : ''}
+          أهداف متوقعة: ${a.expGoals.home.toFixed(1)} - ${a.expGoals.away.toFixed(1)}${a.xgInfo ? ` · <b>xG</b> لكل ماتش: ${a.xgInfo.home.xg} صناعة / ${a.xgInfo.home.xga} استقبال ضد ${a.xgInfo.away.xg} / ${a.xgInfo.away.xga} 📡` : ''}${top3 ? `<br>أكثر 3 نتايج احتمالاً: ${top3}` : ''}
         </p>
       </div>
 
@@ -916,13 +959,16 @@ function renderSlips() {
   header.querySelector('#btn-refresh-results').onclick = refreshResults;
 
   // المزامنة بين الأجهزة
-  const canUpload = !!(localStorage.getItem(GH_TOKEN_KEY) || localStorage.getItem(GH_TOKEN_ENC_KEY)) && window.AUTH_ROLE === 'admin';
+  const hasWorker = !!workerUrl();
+  const canUpload = hasWorker || (!!(localStorage.getItem(GH_TOKEN_KEY) || localStorage.getItem(GH_TOKEN_ENC_KEY)) && window.AUTH_ROLE === 'admin');
   const syncBox = el('div', 'slip-box');
   syncBox.innerHTML = `
-    <div class="slip-head"><h3>🔁 بياناتك على أكتر من جهاز</h3></div>
+    <div class="slip-head"><h3>🔁 بياناتك على أكتر من جهاز ${hasWorker ? '<span class="conf-badge conf-high">تلقائية ✓</span>' : ''}</h3></div>
     <p class="pillar-note" style="margin-bottom:10px">
-      مجموعاتك وسجل التعلم متخزنين على الجهاز ده بس. عشان تنقلهم: صدّر ملف وافتحه على الجهاز التاني،
-      ${canUpload ? 'أو ارفع نسخة مشفرة على الموقع تقدر تنزلها من أي جهاز تدخل منه بنفس الباسورد.' : 'أو نزّل آخر نسخة مشفرة مرفوعة لحسابك (الرفع بيتم من جهاز الأدمن).'}
+      ${hasWorker
+        ? 'المزامنة شغالة تلقائياً عبر السيرفر: بياناتك بتترفع مشفرة وبتتنزل على أي جهاز تدخل منه بنفس الباسورد — من غير ما تعمل حاجة. الأزرار تحت لو حبيت تزامن يدوي فوراً أو تحتفظ بنسخة ملف.'
+        : `مجموعاتك وسجل التعلم متخزنين على الجهاز ده بس. عشان تنقلهم: صدّر ملف وافتحه على الجهاز التاني،
+      ${canUpload ? 'أو ارفع نسخة مشفرة على الموقع تقدر تنزلها من أي جهاز تدخل منه بنفس الباسورد.' : 'أو نزّل آخر نسخة مشفرة مرفوعة لحسابك (الرفع بيتم من جهاز الأدمن).'}`}
     </p>
     <div style="display:flex; gap:8px; flex-wrap:wrap">
       <button id="btn-export-data" class="save-btn">⬇️ تصدير ملف</button>
@@ -934,9 +980,9 @@ function renderSlips() {
   area.appendChild(syncBox);
   syncBox.querySelector('#btn-export-data').onclick = exportMyData;
   syncBox.querySelector('#btn-import-data').onclick = importMyData;
-  syncBox.querySelector('#btn-cloud-down').onclick = cloudDownload;
+  syncBox.querySelector('#btn-cloud-down').onclick = () => cloudDownload();
   const upBtn = syncBox.querySelector('#btn-cloud-up');
-  if (upBtn) upBtn.onclick = cloudUpload;
+  if (upBtn) upBtn.onclick = () => cloudUpload();
 
   if (!slips.length) {
     area.appendChild(el('div', 'empty-state', '<div class="empty-icon">📂</div><h3>مفيش مجموعات محفوظة</h3><p>افتح تحليل أي ماتش واضغط 💾 احفظ جنب التوقع اللي عاجبك.</p>'));
@@ -1855,34 +1901,64 @@ function importMyData() {
   input.click();
 }
 
-async function cloudUpload() {
-  if (!window.DATA_KEY) { toast('سجل خروج وادخل تاني الأول عشان مفتاح التشفير يتجهز'); return; }
+async function buildEncryptedPayload() {
   const key = await dataCryptoKey(['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(collectMyData()))));
   const buf = new Uint8Array(12 + ct.length); buf.set(iv); buf.set(ct, 12);
   let b64 = ''; for (let i = 0; i < buf.length; i += 0x8000) b64 += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-  const payload = JSON.stringify({ enc: btoa(b64), updatedAt: new Date().toISOString() });
-  try {
-    await ghPutFile(`${SYNC_DIR}/${syncId()}.json`, payload, 'مزامنة بيانات مستخدم');
-    toast('☁️ اترفعت — أي جهاز هيدخل بنفس الباسورد يقدر ينزلها بعد دقيقة');
-  } catch (e) { toast('❌ فشل الرفع: ' + e.message); }
+  return JSON.stringify({ enc: btoa(b64), updatedAt: new Date().toISOString() });
 }
 
-async function cloudDownload() {
-  if (!window.DATA_KEY) { toast('سجل خروج وادخل تاني الأول عشان مفتاح التشفير يتجهز'); return; }
+async function decryptAndMerge(enc) {
+  const buf = Uint8Array.from(atob(enc), c => c.charCodeAt(0));
+  const key = await dataCryptoKey(['decrypt']);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
+  mergeMyData(JSON.parse(new TextDecoder().decode(pt)));
+}
+
+async function cloudUpload({ silent = false } = {}) {
+  if (!window.DATA_KEY) { if (!silent) toast('سجل خروج وادخل تاني الأول عشان مفتاح التشفير يتجهز'); return false; }
+  const payload = await buildEncryptedPayload();
   try {
-    const res = await fetch(`sync/${syncId()}.json?ts=${Date.now()}`);
-    if (res.status === 404) { toast('مفيش نسخة مرفوعة لحسابك لسه — ارفع من الجهاز الأساسي الأول'); return; }
+    if (workerUrl()) {
+      // السيرفر: فوري ومتاح لكل المستخدمين من غير مفتاح GitHub
+      const res = await fetch(`${workerUrl()}/sync/${syncId()}`, { method: 'PUT', body: payload, headers: { 'Content-Type': 'application/json' } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!silent) toast('☁️ اترفعت فوراً — أي جهاز بنفس الباسورد ياخدها على طول');
+    } else {
+      await ghPutFile(`${SYNC_DIR}/${syncId()}.json`, payload, 'مزامنة بيانات مستخدم');
+      if (!silent) toast('☁️ اترفعت — أي جهاز هيدخل بنفس الباسورد يقدر ينزلها بعد دقيقة');
+    }
+    return true;
+  } catch (e) { if (!silent) toast('❌ فشل الرفع: ' + e.message); return false; }
+}
+
+async function cloudDownload({ silent = false } = {}) {
+  if (!window.DATA_KEY) { if (!silent) toast('سجل خروج وادخل تاني الأول عشان مفتاح التشفير يتجهز'); return false; }
+  try {
+    const res = workerUrl()
+      ? await fetch(`${workerUrl()}/sync/${syncId()}`)
+      : await fetch(`sync/${syncId()}.json?ts=${Date.now()}`);
+    if (res.status === 404) { if (!silent) toast('مفيش نسخة مرفوعة لحسابك لسه — ارفع من الجهاز الأساسي الأول'); return false; }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const { enc } = await res.json();
-    const buf = Uint8Array.from(atob(enc), c => c.charCodeAt(0));
-    const key = await dataCryptoKey(['decrypt']);
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
-    mergeMyData(JSON.parse(new TextDecoder().decode(pt)));
-    toast('✅ آخر نسخة اتدمجت مع بيانات الجهاز ده');
-    renderSlips();
-  } catch (e) { toast('❌ فشل التنزيل: ' + e.message); }
+    await decryptAndMerge(enc);
+    if (!silent) { toast('✅ آخر نسخة اتدمجت مع بيانات الجهاز ده'); renderSlips(); }
+    return true;
+  } catch (e) { if (!silent) toast('❌ فشل التنزيل: ' + e.message); return false; }
+}
+
+// المزامنة التلقائية (مع السيرفر بس): تنزيل ودمج عند الفتح، ورفع صامت كل شوية
+let autoSyncBusy = false;
+async function autoSyncTick(first = false) {
+  if (!workerUrl() || !window.DATA_KEY || autoSyncBusy) return;
+  autoSyncBusy = true;
+  try {
+    if (first) await cloudDownload({ silent: true }); // هات اللي اتعمل على الأجهزة التانية
+    await cloudUpload({ silent: true });
+  } catch { /* المحاولة الجاية */ }
+  autoSyncBusy = false;
 }
 
 // ---------- صفحة الإدارة (للأدمن بس) ----------
@@ -2032,6 +2108,23 @@ function renderAdmin() {
     </div>
 
     <div class="slip-box">
+      <div class="slip-head"><h3>🌐 السيرفر (Cloudflare) ${window.WORKER_URL ? '<span class="conf-badge conf-high">مربوط ✓</span>' : '<span class="conf-badge conf-low">مش مربوط</span>'}</h3></div>
+      <p class="pillar-note" style="margin-bottom:10px">
+        السيرفر بيفتح ميزتين: <b>بيانات xG</b> (جودة الفرص) للدوريات الخمسة الكبار،
+        و<b>مزامنة تلقائية فورية</b> لكل المستخدمين. الصق رابط الـ Worker بتاعك
+        (بيبقى بالشكل <span dir="ltr">https://predictor.xxx.workers.dev</span>) واضغط حفظ — بيتنشر في إعدادات الموقع لكل الأجهزة.
+      </p>
+      <form id="admin-worker-form" class="admin-form">
+        <input type="url" id="admin-worker-url" dir="ltr" placeholder="https://predictor.xxx.workers.dev" value="${escapeHtml(window.WORKER_URL || '')}">
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button type="submit" class="primary-btn" ${hasToken ? '' : 'disabled title="اربط GitHub الأول من تحت"'}>💾 احفظ وانشر</button>
+          <button type="button" id="admin-worker-test" class="save-btn">🔌 اختبر الاتصال</button>
+        </div>
+      </form>
+      <p id="admin-worker-status" class="pillar-note"></p>
+    </div>
+
+    <div class="slip-box">
       <div class="slip-head"><h3>🔗 ربط GitHub ${hasToken ? '<span class="conf-badge conf-high">متصل ✓</span>' : '<span class="conf-badge conf-low">مش متصل</span>'}</h3></div>
       <p class="pillar-note" style="margin-bottom:12px">
         عشان صفحة الإدارة تقدر تنشر التغيير على الموقع مباشرة (حتى من الفون)، محتاجة مفتاح GitHub — مرة واحدة بس.
@@ -2083,6 +2176,36 @@ function renderAdmin() {
       else elp.innerHTML = '🔒 الباسورد ده متسجل من قبل ميزة العرض — لو عايز تشوفه بعد كده، اكتبه تاني في خانة كلمة السر واحفظ (أو سجل خروج وادخل تاني لو فاتح من جلسة قديمة)';
     });
   }
+
+  // ربط سيرفر Cloudflare
+  const workerStatus = $('#admin-worker-status');
+  $('#admin-worker-test').onclick = async () => {
+    const val = ($('#admin-worker-url').value.trim() || window.WORKER_URL || '').replace(/\/+$/, '');
+    if (!val) { workerStatus.textContent = '⚠️ اكتب الرابط الأول'; return; }
+    workerStatus.textContent = '⏳ بجرب الاتصال…';
+    try {
+      const res = await fetch(val + '/');
+      const data = await res.json();
+      if (data.service !== 'predictor-worker') throw new Error('الرد مش من سيرفر المُتنبئ');
+      workerStatus.innerHTML = `✅ السيرفر شغال${data.kv ? ' والمزامنة جاهزة (KV مربوط)' : ' — <b>بس KV مش مربوط</b>: المزامنة التلقائية مش هتشتغل لحد ما تربطه من إعدادات الـ Worker'}`;
+    } catch (err) { workerStatus.textContent = '❌ الاتصال فشل: ' + err.message + ' — اتأكد من الرابط وإن الـ Worker متنشر'; }
+  };
+  $('#admin-worker-form').onsubmit = async e => {
+    e.preventDefault();
+    const val = $('#admin-worker-url').value.trim().replace(/\/+$/, '');
+    if (val && !/^https:\/\/.+/.test(val)) { workerStatus.textContent = '⚠️ الرابط لازم يبدأ بـ https://'; return; }
+    workerStatus.textContent = '⏳ بنشر الإعداد…';
+    const prev = window.WORKER_URL;
+    window.WORKER_URL = val || undefined;
+    try {
+      await publishConfig(window.USER_PASSES || [], val ? 'ربط سيرفر Cloudflare' : 'فصل السيرفر');
+      workerStatus.textContent = '✅ اتنشر — هيوصل كل الأجهزة خلال دقيقة';
+      renderAdmin();
+    } catch (err) {
+      window.WORKER_URL = prev;
+      workerStatus.textContent = '❌ فشل النشر: ' + err.message;
+    }
+  };
 
   $('#admin-token-form').onsubmit = async e => {
     e.preventDefault();
@@ -2218,6 +2341,7 @@ async function publishConfig(newPasses, actionLabel, adminOverride = null) {
     '// ADMIN_HASH: كلمة سر الأدمن — USER_PASSES: باسوردات المستخدمين (كل واحد باسم ومدة صلاحية)',
     `window.ADMIN_HASH = '${admin.hash}';`,
     ...(admin.salt ? [`window.ADMIN_SALT = '${admin.salt}';`, `window.ADMIN_ITER = ${admin.iter || PBKDF2_ITER};`] : []),
+    ...(window.WORKER_URL ? [`window.WORKER_URL = '${window.WORKER_URL}';`] : []),
     `window.USER_PASSES = ${JSON.stringify(newPasses, null, 2)};`,
     '',
   ].join('\n');
@@ -2313,5 +2437,8 @@ document.addEventListener('DOMContentLoaded', () => {
   seedSharedElo();          // القاعدة المشتركة المتحدثة ليلياً من GitHub
   setTimeout(autoLearnTick, 20 * 1000);         // تعلم صامت بعد ما الصفحة تحمل
   setInterval(autoLearnTick, 15 * 60 * 1000);   // وكل شوية طول ما الموقع فاتح
+  setTimeout(() => autoSyncTick(true), 5 * 1000);   // مزامنة تلقائية مع السيرفر (لو مربوط)
+  setInterval(() => autoSyncTick(false), 10 * 60 * 1000);
+  document.addEventListener('predictor-authed', () => setTimeout(() => autoSyncTick(true), 2000));
   setDate(new Date());
 });

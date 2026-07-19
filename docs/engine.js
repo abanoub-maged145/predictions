@@ -236,7 +236,7 @@ const Engine = (() => {
     homeRoster, awayRoster, homeInjuries, awayInjuries,
     overlapByGame, neutralSite, kickoff,
     oppStrength = {}, strengthOf = null, pickcenter = null,
-    elo = null, adRates = null, marketWeight = 0.45,
+    elo = null, adRates = null, xgRates = null, marketWeight = 0.45,
     learnedWeights = null, calib = null,
     homeName = 'صاحب الأرض', awayName = 'الضيف',
   }) {
@@ -288,6 +288,20 @@ const Engine = (() => {
         const wAD = 0.5 * rel / (rel + 8);
         lamH = (1 - wAD) * lamH + wAD * gH;
         lamA = (1 - wAD) * lamA + wAD * gA;
+      }
+    }
+    // بيانات xG (جودة الفرص المصنوعة فعلاً) — أقوى مؤشر للأهداف في التحليل الحديث:
+    // بتشيل حظ الإصابة والإهدار من الصورة. وزنها كبير لما تتوفر عينة كافية
+    let xgInfo = null;
+    if (xgRates?.home?.xg != null && xgRates?.away?.xg != null) {
+      const rel = Math.min(xgRates.home.n || 0, xgRates.away.n || 0);
+      if (rel >= 6) {
+        const gH = clamp(0.5 * (xgRates.home.xg + xgRates.away.xga) * (neutralSite ? 1 : 1.08), 0.2, 4);
+        const gA = clamp(0.5 * (xgRates.away.xg + xgRates.home.xga) * (neutralSite ? 1 : 0.92), 0.2, 4);
+        const wXG = 0.40;
+        lamH = (1 - wXG) * lamH + wXG * gH;
+        lamA = (1 - wXG) * lamA + wXG * gA;
+        xgInfo = { home: xgRates.home, away: xgRates.away };
       }
     }
     lamH = clamp(lamH, 0.25, 3.6); lamA = clamp(lamA, 0.25, 3.6);
@@ -348,6 +362,7 @@ const Engine = (() => {
     if (market) quality += 0.11;
     if (Object.keys(oppStrength).length || strengthOf) quality += 0.04;
     if (eloInfo?.weight) quality += 0.04;
+    if (xgInfo) quality += 0.05;
     quality = clamp(quality, 0.3, 1);
 
     const confOf = (p, mkt, agreeBonus = 0) => calibrate(Math.round(clamp((0.72 * p + 0.28 * quality) * 100 + agreeBonus, 5, 96)), calib, mkt);
@@ -408,7 +423,7 @@ const Engine = (() => {
     return {
       pillars: { h2h, form: { home: fH, away: fA }, squad: { home: sH, away: sA } },
       market, marketAgreement, modelPick, marketPick, marketWeightUsed: mw,
-      eloInfo,
+      eloInfo, xgInfo,
       weightsUsed: w,
       strength: { home: Math.round(strengthHome), away: Math.round(strengthAway) },
       rest: { home: fH.rest, away: fA.rest, adjHome: restH, adjAway: restA },

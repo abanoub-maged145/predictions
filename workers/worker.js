@@ -108,27 +108,23 @@ async function xgDebug(url) {
   const slug = UNDERSTAT[url.searchParams.get('league')] || 'EPL';
   const res = await fetch(`https://understat.com/league/${slug}`, { headers: BROWSER_HEADERS });
   const html = await res.text();
-  const scripts = [...html.matchAll(/<script[^>]*src=["']([^"']+)["']/g)].map(m => m[1]);
 
-  // نزّل أول ملفات جافاسكريبت وفتشها عن مسارات فيها api/league/team/stat
-  const apiPaths = new Set();
-  const grab = text => {
-    for (const m of text.matchAll(/["'`](\/[A-Za-z0-9_\-./?=&{}$]{3,90})["'`]/g)) {
-      if (/api|league|team|stat|match|getl|getp/i.test(m[1])) apiPaths.add(m[1]);
+  // مقاطع حوالين كلمة معينة — عشان نشوف الجداول ونداءات الـ ajax جوه الصفحة
+  const around = (re, radius, max) => {
+    const out = [];
+    for (const m of html.matchAll(re)) {
+      out.push(html.slice(Math.max(0, m.index - 80), m.index + radius).replace(/\s+/g, ' '));
+      if (out.length >= max) break;
     }
+    return out;
   };
-  grab(html);
-  for (const src of scripts.filter(s => s.startsWith('/') || s.includes('understat')).slice(0, 4)) {
-    try {
-      const js = await fetch(src.startsWith('/') ? `https://understat.com${src}` : src, { headers: { ...BROWSER_HEADERS, 'Accept': '*/*' } });
-      grab(await js.text());
-    } catch { /* تجاهل */ }
-  }
+
   return json({
     status: res.status, length: html.length,
-    scripts: scripts.slice(0, 15),
-    apiPaths: [...apiPaths].slice(0, 60),
-    sample: html.slice(0, 900),
+    tables: around(/<table/gi, 1200, 2),                                  // جدول xG لو متحطط في الصفحة
+    ajax: around(/\$\.(ajax|get|post|getJSON)|fetch\(|XMLHttpRequest/gi, 700, 4), // نداءات البيانات
+    inlineScripts: around(/<script(?![^>]*src)[^>]*>/gi, 900, 3),         // السكربتات المكتوبة جوه الصفحة
+    bodyTail: html.slice(-1500).replace(/\s+/g, ' '),                     // آخر الصفحة — غالباً فيها كود التحميل
   });
 }
 

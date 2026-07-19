@@ -236,7 +236,7 @@ const Engine = (() => {
     homeRoster, awayRoster, homeInjuries, awayInjuries,
     overlapByGame, neutralSite, kickoff,
     oppStrength = {}, strengthOf = null, pickcenter = null,
-    elo = null, marketWeight = 0.45,
+    elo = null, adRates = null, marketWeight = 0.45,
     learnedWeights = null, calib = null,
     homeName = 'صاحب الأرض', awayName = 'الضيف',
   }) {
@@ -277,6 +277,19 @@ const Engine = (() => {
       lamH *= Math.pow(scale, 0.5); lamA *= Math.pow(scale, 0.5);
     }
     if (!neutralSite) { lamH *= 1.06; lamA *= 0.96; }
+
+    // تقييمات الهجوم/الدفاع المتراكمة — أدق من متوسطات آخر 8 ماتشات لأنها
+    // مبنية على كل تاريخ الفريق موزوناً بقوة الخصوم. وزنها بيزيد مع حجم العينة
+    if (adRates?.home?.atk && adRates?.away?.atk) {
+      const rel = Math.min(adRates.home.n || 0, adRates.away.n || 0);
+      if (rel >= 5) {
+        const gH = clamp(adRates.home.atk * adRates.away.def * 1.30 * (neutralSite ? 1 : 1.12), 0.2, 4);
+        const gA = clamp(adRates.away.atk * adRates.home.def * 1.30 * (neutralSite ? 1 : 0.94), 0.2, 4);
+        const wAD = 0.5 * rel / (rel + 8);
+        lamH = (1 - wAD) * lamH + wAD * gH;
+        lamA = (1 - wAD) * lamA + wAD * gA;
+      }
+    }
     lamH = clamp(lamH, 0.25, 3.6); lamA = clamp(lamA, 0.25, 3.6);
 
     const mx = poissonMatrix(lamH, lamA);

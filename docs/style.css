@@ -455,3 +455,7 @@ html.locked .topbar, html.locked main, html.locked .foot { display: none !import
 .pm-row .pm-said { color: var(--muted); flex: 1; text-align: center; }
 .pm-clickable { cursor: pointer; }
 .pm-clickable:hover { border-color: var(--gold); }
+
+/* رأس أضمن الاختيارات مع زرار المشاركة */
+.tp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.tp-head .tp-title { margin-bottom: 0; }

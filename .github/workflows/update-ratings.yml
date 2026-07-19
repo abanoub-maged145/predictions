@@ -1,0 +1,27 @@
+# تحديث ليلي لقاعدة التقييمات (Elo + هجوم/دفاع) — بيشتغل حتى والموقع مقفول
+name: update-ratings
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # كل يوم 3 الفجر UTC — بعد ما ماتشات اليوم تخلص
+  workflow_dispatch: {}    # وتقدر تشغله يدوي من تبويب Actions
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: تحديث القاعدة من نتايج آخر أيام
+        run: node scripts/update-ratings.mjs
+      - name: نشر التغيير لو فيه جديد
+        run: |
+          git config user.name "ratings-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add docs/data/elo.json
+          git diff --cached --quiet && echo "no changes" || (git commit -m "تحديث ليلي لقاعدة التقييمات" && git push)

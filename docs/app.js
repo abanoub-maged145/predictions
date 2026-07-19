@@ -159,6 +159,7 @@ async function getOppStrength(league) {
 // في كل البطولات (بيحل مشكلة مقارنة فرق من دوريات مختلفة).
 // مشترك بين المستخدمين لأنه بيانات موضوعية، وبيتزامن مع النسخ الاحتياطية.
 const ELO_KEY = 'predictor_elo_v1';
+const clampN = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const EloDB = {
   d: null,
   load() { if (!this.d) this.d = store.get(ELO_KEY, { teams: {}, done: {}, order: [] }); return this.d; },
@@ -185,6 +186,18 @@ const EloDB = {
     const dA = +(K(a) * mult * ((1 - res) - (1 - exp))).toFixed(1);
     h.r = +(h.r + dH).toFixed(1); h.d = dH; // آخر تحرك — لسهم الصعود/الهبوط في الترتيب
     a.r = +(a.r + dA).toFixed(1); a.d = dA;
+
+    // تقييم هجوم/دفاع منفصلين (حوالين 1.0) — بيغذوا حساب الأهداف المتوقعة
+    h.atk ??= 1; h.def ??= 1; a.atk ??= 1; a.def ??= 1;
+    const MU = 1.30; // متوسط أهداف الفريق في الماتش
+    const expGH = h.atk * a.def * MU * (m.neutralSite ? 1 : 1.12);
+    const expGA = a.atk * h.def * MU * (m.neutralSite ? 1 : 0.94);
+    const kg = t => t.n < 10 ? 0.05 : 0.025;
+    h.atk = +clampN(h.atk + kg(h) * (hs - expGH) / MU, 0.5, 2).toFixed(3);
+    a.def = +clampN(a.def + kg(a) * (hs - expGH) / MU, 0.5, 2).toFixed(3);
+    a.atk = +clampN(a.atk + kg(a) * (as - expGA) / MU, 0.5, 2).toFixed(3);
+    h.def = +clampN(h.def + kg(h) * (as - expGA) / MU, 0.5, 2).toFixed(3);
+
     if (m.home.name) { h.name = m.home.name; h.logo = m.home.logo || h.logo; }
     if (m.away.name) { a.name = m.away.name; a.logo = m.away.logo || a.logo; }
     h.n++; a.n++;
@@ -199,7 +212,33 @@ const EloDB = {
     return n;
   },
   teamCount() { return Object.keys(this.load().teams).length; },
+  // دمج قاعدة تانية (مزامنة أو القاعدة المشتركة من الريبو): لكل فريق النسخة اللي شافت أكتر
+  merge(incoming) {
+    if (!incoming?.teams) return;
+    const cur = this.load();
+    for (const [id, t] of Object.entries(incoming.teams)) {
+      if (!cur.teams[id] || (t.n || 0) > (cur.teams[id].n || 0)) cur.teams[id] = t;
+    }
+    for (const id of Object.keys(incoming.done || {})) {
+      if (!cur.done[id]) { cur.done[id] = 1; cur.order.push(id); }
+    }
+    while (cur.order.length > 4000) delete cur.done[cur.order.shift()];
+    this.save();
+  },
 };
+
+// القاعدة المشتركة: بتتحدث ليلياً بأكشن GitHub وبيحملها أي جهاز مرة كل 12 ساعة —
+// كده النظام بيتعلم حتى والموقع مقفول، وكل الأجهزة بتبدأ من قاعدة جاهزة
+async function seedSharedElo() {
+  const last = +(localStorage.getItem('predictor_elo_seed_ts') || 0);
+  if (Date.now() - last < 12 * 3600 * 1000) return;
+  try {
+    const res = await fetch(`data/elo.json?ts=${Date.now()}`);
+    if (!res.ok) return;
+    EloDB.merge(await res.json());
+    localStorage.setItem('predictor_elo_seed_ts', String(Date.now()));
+  } catch { /* مش متاح */ }
+}
 
 // ---------- جلب ماتشات اليوم ----------
 async function loadMatches() {
@@ -517,6 +556,7 @@ async function getAnalysis(m, { withOverlap = true } = {}) {
     oppStrength,
     strengthOf,
     elo: { home: EloDB.get(m.home.id), away: EloDB.get(m.away.id) },
+    adRates: { home: EloDB.get(m.home.id), away: EloDB.get(m.away.id) },
     marketWeight: learned.mktW || 0.45,
     pickcenter: summary.pickcenter || summary.odds || null,
     learnedWeights: learned.weights,
@@ -762,7 +802,8 @@ async function analyzeAll() {
 
   const top = $('#top-picks');
   top.classList.remove('hidden');
-  top.innerHTML = '<h2 class="tp-title">⚡ أضمن اختيارات اليوم</h2>';
+  top.innerHTML = '<div class="tp-head"><h2 class="tp-title">⚡ أضمن اختيارات اليوم</h2><button id="btn-share-picks" class="save-btn">📤 شارك كصورة</button></div>';
+  top.querySelector('#btn-share-picks').onclick = shareTopPicks;
   for (const { m, a } of ranked) {
     const valueMk = a.markets.find(mk => mk.value);
     const row = el('div', 'tp-row');
@@ -1165,13 +1206,50 @@ function renderStats() {
   `;
   area.appendChild(wBox);
 
+  // تدريب النموذج على أرشيف الموسم الماضي
+  const trainBox = el('div', 'slip-box');
+  trainBox.innerHTML = `
+    <div class="slip-head"><h3>🏋️ تدريب النموذج</h3></div>
+    <p class="pillar-note" style="margin-bottom:12px">
+      بدل ما تستنى قاعدة التقييمات تتبني ماتش بماتش: الزرار ده بيلعب <b>الموسم الماضي كله</b>
+      (كل البطولات، بالترتيب الزمني) من أرشيف النتايج — فبيبني تقييمات Elo وهجوم/دفاع كاملة فوراً،
+      وبيقيس دقة النموذج على ماتشات حقيقية. بياخد دقيقة أو اتنين وبيستهلك بيانات — الأفضل على واي فاي.
+      الماتشات المؤجلة والملغية مش بتدخل.
+    </p>
+    <button id="btn-train" class="primary-btn">🏋️ درّب النموذج على الموسم الماضي</button>
+    <p id="train-result" class="pillar-note" style="margin-top:10px"></p>
+    <div id="train-publish"></div>
+  `;
+  area.appendChild(trainBox);
+  trainBox.querySelector('#btn-train').onclick = async () => {
+    if (!confirm('التدريب هيجيب أرشيف موسم كامل (دقيقة-اتنين وبيانات معتبرة). نبدأ؟')) return;
+    const rep = await trainOnHistory(trainBox.querySelector('#btn-train'));
+    if (!rep) return;
+    trainBox.querySelector('#train-result').innerHTML = rep.processed || rep.teams
+      ? `✅ اتدرب على <b>${rep.processed}</b> ماتش جديد — قاعدة التقييمات بقت <b>${rep.teams}</b> فريق.` +
+        (rep.evalAcc != null ? `<br>🎯 دقة النموذج في اختيار الفايز (على ${rep.evalN} ماتش محسوم): <b>${rep.evalAcc}%</b> — مقابل ${rep.homeAcc}% لو كنا بنختار صاحب الأرض دايماً.` : '')
+      : 'كل ماتشات الفترة دي متسجلة عندك فعلاً — مفيش جديد.';
+    const canPublish = window.AUTH_ROLE === 'admin' && !!(localStorage.getItem(GH_TOKEN_KEY) || localStorage.getItem(GH_TOKEN_ENC_KEY));
+    if (canPublish && (rep.processed || rep.teams)) {
+      trainBox.querySelector('#train-publish').innerHTML = '<button id="btn-publish-elo" class="save-btn" style="margin-top:8px">☁️ انشر القاعدة للموقع — كل الأجهزة تستفيد فوراً</button>';
+      trainBox.querySelector('#btn-publish-elo').onclick = async ev => {
+        ev.target.disabled = true; ev.target.textContent = '⏳ بنشر…';
+        try {
+          await ghPutFile('docs/data/elo.json', JSON.stringify(EloDB.load()), 'نشر قاعدة التقييمات بعد التدريب');
+          ev.target.textContent = '✅ اتنشرت — هتوصل الأجهزة خلال دقيقة';
+        } catch (err) { ev.target.disabled = false; ev.target.textContent = '❌ فشل النشر: ' + err.message; }
+      };
+    }
+    if (state.currentView === 'stats') { /* الأرقام فوق اتغيرت */ }
+  };
+
   if (!log.length) area.appendChild(el('div', 'empty-state', '<div class="empty-icon">🧠</div><h3>لسه مفيش سجل</h3><p>كل ماتش بتحلله بيتسجل هنا تلقائياً — وبعد ما يخلص دوس "حدّث وتعلّم" عشان النظام يقيس نفسه ويتحسن.</p>'));
 }
 
-async function learnFromResults() {
-  const btn = $('#btn-learn');
-  btn.disabled = true; btn.textContent = '⏳ بجيب النتائج وبتعلم…';
-
+// جوهر التعلم — بيتنده من الزرار ومن التحديث التلقائي.
+// النتايج بتيجي من fetchScores اللي بيعدي كل ماتش على فحص isFinal:
+// عمر ماتش لسه شغال (أو متأجل/ملغي) ما بيدخل في التعلم
+async function learnCore() {
   const log = store.get(autologKey(), []);
   const pending = log.filter(x => x.status === 'pending' && new Date(x.kickoff).getTime() < Date.now() - 2 * 3600 * 1000);
   // السجلات اللي اتحسبت في آخر 12 ساعة بتتراجع — يمكن الماتش كان لسه شغال وقتها
@@ -1258,8 +1336,170 @@ async function learnFromResults() {
   store.set(autologKey(), log);
   store.set(learnedKey(), learned);
   state.analysisCache = {}; // التحليلات الجاية هتستخدم الأوزان والمعايرة الجديدة
+  return newly;
+}
+
+async function learnFromResults() {
+  const btn = $('#btn-learn');
+  btn.disabled = true; btn.textContent = '⏳ بجيب النتائج وبتعلم…';
+  const newly = await learnCore();
   renderStats();
   toast(newly ? `🧠 النظام اتعلم من ${newly} ماتش جديد` : 'مفيش ماتشات جديدة خلصت لسه');
+}
+
+// التعلم التلقائي: كل ما الموقع يبقى فاتح، بيتعلم لوحده بصمت مرة كل ساعتين —
+// بنفس ضمانة isFinal: الماتشات اللي خلصت تماماً بس
+async function autoLearnTick() {
+  if (!window.AUTH_ROLE) return;
+  const key = nsKey('predictor_autolearn_ts');
+  if (Date.now() - (+(localStorage.getItem(key) || 0)) < 2 * 3600 * 1000) return;
+  try {
+    const newly = await learnCore();
+    localStorage.setItem(key, String(Date.now()));
+    if (newly) {
+      if (state.currentView === 'stats') renderStats();
+      toast(`🧠 النظام اتعلم تلقائياً من ${newly} ماتش خلص`);
+    }
+  } catch { /* هيتعاد المحاولة في الدورة الجاية */ }
+}
+
+// ---------- التدريب على المواسم السابقة (Backtesting) ----------
+// بيلعب الموسم الماضي كله من أرشيف ESPN بالترتيب الزمني: بيبني قاعدة
+// Elo وهجوم/دفاع كاملة فوراً، وبيقيس دقة النموذج على ماتشات حقيقية.
+// كل ماتش بيعدي على فحص isFinal — المؤجل والملغي مش بيدخلوا.
+async function trainOnHistory(btn) {
+  if (state.trainRunning) return;
+  state.trainRunning = true;
+  btn.disabled = true;
+
+  const ranges = [];
+  for (let i = 12; i >= 1; i--) {
+    const from = new Date(); from.setDate(from.getDate() - i * 30);
+    const to = new Date(); to.setDate(to.getDate() - (i - 1) * 30 - 1);
+    ranges.push(`${fmtDateKey(from)}-${fmtDateKey(to)}`);
+  }
+  const jobs = [];
+  for (const lg of LEAGUES) for (const r of ranges) jobs.push({ lg: lg.code, r });
+
+  const events = [];
+  let done = 0;
+  const queue = [...jobs];
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (queue.length) {
+      const { lg, r } = queue.shift();
+      try {
+        const data = await fetchJSON(`${API}/${lg}/scoreboard?dates=${r}&limit=400`, { cache: false });
+        for (const ev of (data.events || [])) {
+          const m = toMatch(ev, lg);
+          if (m && m.finished) events.push(m);
+        }
+      } catch { /* بطولة مش متاحة في الفترة دي */ }
+      done++;
+      btn.textContent = `⏳ بجيب الأرشيف ${Math.round(done / jobs.length * 100)}%…`;
+    }
+  }));
+
+  // معالجة زمنية: الأقدم الأول عشان التقييمات تتبني صح
+  const seen = new Set();
+  const chrono = events
+    .filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; })
+    .sort((x, y) => new Date(x.date) - new Date(y.date));
+
+  // تقييم النموذج وهو بيتبني: قبل ما نتعلم من الماتش، بنتوقعه الأول
+  let evalN = 0, evalHit = 0, homeHit = 0;
+  let processed = 0;
+  const d = EloDB.load();
+  for (const m of chrono) {
+    const h = d.teams[String(m.home.id)], a = d.teams[String(m.away.id)];
+    const hs = parseInt(m.home.score, 10), as = parseInt(m.away.score, 10);
+    if (h && a && h.n >= 8 && a.n >= 8 && !isNaN(hs) && hs !== as) {
+      const diff = h.r + (m.neutralSite ? 0 : 60) - a.r;
+      evalN++;
+      if ((diff >= 0) === (hs > as)) evalHit++;
+      if (hs > as) homeHit++;
+    }
+    if (EloDB.record(m)) processed++;
+  }
+  EloDB.save();
+
+  state.trainRunning = false;
+  btn.disabled = false;
+  btn.textContent = '🏋️ درّب النموذج على الموسم الماضي';
+  return {
+    processed, teams: EloDB.teamCount(),
+    evalN, evalAcc: evalN ? Math.round(evalHit / evalN * 100) : null,
+    homeAcc: evalN ? Math.round(homeHit / evalN * 100) : null,
+  };
+}
+
+// ---------- مشاركة توقعات اليوم كصورة ----------
+async function shareTopPicks() {
+  const analyzed = state.matches.filter(m => m.state === 'pre' && state.analysisCache[m.id]);
+  if (!analyzed.length) { toast('دوس «أضمن اختيارات اليوم» الأول وبعدين شارك'); return; }
+  const ranked = analyzed
+    .map(m => ({ m, a: state.analysisCache[m.id] }))
+    .sort((x, y) => y.a.best.conf - x.a.best.conf)
+    .slice(0, 6);
+
+  const W = 1080, rowH = 150, top = 300, H = top + ranked.length * rowH + 130;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.direction = 'rtl';
+
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#101a30'); bg.addColorStop(1, '#0b1120');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#f5b942';
+  ctx.font = '900 64px Tahoma, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('⚽ المُتنبئ', W / 2, 110);
+  ctx.fillStyle = '#8fa3c8';
+  ctx.font = '600 36px Tahoma, Arial';
+  ctx.fillText(`أضمن اختيارات ${fmtDayName(state.date)}`, W / 2, 175);
+  ctx.strokeStyle = 'rgba(245,185,66,.4)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(80, 215); ctx.lineTo(W - 80, 215); ctx.stroke();
+
+  ranked.forEach(({ m, a }, i) => {
+    const y = top + i * rowH;
+    ctx.fillStyle = 'rgba(255,255,255,.045)';
+    ctx.beginPath(); ctx.roundRect(60, y - 55, W - 120, rowH - 20, 18); ctx.fill();
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#eef2fa';
+    ctx.font = '800 38px Tahoma, Arial';
+    ctx.fillText(`${m.home.name} × ${m.away.name}`, W - 100, y);
+    ctx.fillStyle = '#8fa3c8';
+    ctx.font = '600 32px Tahoma, Arial';
+    ctx.fillText(`🎯 ${a.best.pickLabel} · ${fmtTime(m.date)}`, W - 100, y + 52);
+
+    const conf = a.best.conf;
+    ctx.fillStyle = conf >= 75 ? '#2e9e5b' : conf >= 60 ? '#c8892a' : '#a84450';
+    ctx.beginPath(); ctx.roundRect(85, y - 24, 130, 62, 31); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = '900 34px Tahoma, Arial';
+    ctx.fillText(`${conf}%`, 150, y + 20);
+  });
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#5b6c8f';
+  ctx.font = '600 26px Tahoma, Arial';
+  ctx.fillText('توقعات آلية بمحرك الثقة — للاستئناس، مش نصيحة مالية', W / 2, H - 55);
+
+  cv.toBlob(async blob => {
+    const file = new File([blob], 'predictions.png', { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'توقعات المُتنبئ' }); return; } catch { /* اتلغت */ }
+    }
+    const aEl = document.createElement('a');
+    aEl.href = URL.createObjectURL(blob);
+    aEl.download = 'predictions.png';
+    aEl.click();
+    URL.revokeObjectURL(aEl.href);
+    toast('📤 اتحملت صورة التوقعات — شاركها براحتك');
+  }, 'image/png');
 }
 
 // ---------- رسم بياني خطي خفيف (SVG من غير مكتبات) ----------
@@ -1580,18 +1820,7 @@ function mergeMyData(incoming) {
   }
 
   // قاعدة Elo: لكل فريق ناخد النسخة اللي شافت ماتشات أكتر
-  if (incoming.elo?.teams) {
-    const cur = store.get(ELO_KEY, { teams: {}, done: {}, order: [] });
-    for (const [id, t] of Object.entries(incoming.elo.teams)) {
-      if (!cur.teams[id] || (t.n || 0) > (cur.teams[id].n || 0)) cur.teams[id] = t;
-    }
-    for (const id of Object.keys(incoming.elo.done || {})) {
-      if (!cur.done[id]) { cur.done[id] = 1; cur.order.push(id); }
-    }
-    while (cur.order.length > 4000) delete cur.done[cur.order.shift()];
-    store.set(ELO_KEY, cur);
-    EloDB.d = null;
-  }
+  if (incoming.elo?.teams) EloDB.merge(incoming.elo);
 
   state.analysisCache = {};
 }
@@ -2079,7 +2308,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#modal').onclick = e => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); };
   updateAdminNav();
   migrateLegacyStorage();
-  document.addEventListener('predictor-authed', () => { updateAdminNav(); migrateLegacyStorage(); });
+  document.addEventListener('predictor-authed', () => { updateAdminNav(); migrateLegacyStorage(); autoLearnTick(); });
   $('#nav-logout').onclick = logout;
+  seedSharedElo();          // القاعدة المشتركة المتحدثة ليلياً من GitHub
+  setTimeout(autoLearnTick, 20 * 1000);         // تعلم صامت بعد ما الصفحة تحمل
+  setInterval(autoLearnTick, 15 * 60 * 1000);   // وكل شوية طول ما الموقع فاتح
   setDate(new Date());
 });

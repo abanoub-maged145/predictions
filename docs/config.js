@@ -3,6 +3,7 @@
 window.ADMIN_HASH = 'b1b5ef5fe5aea1b0f37ae2a1b41a0a68864da5eaff9cdea2e07afd3ec2e11e23';
 window.ADMIN_SALT = 'wCCq6zxdLLGnTCpfzVHwKA==';
 window.ADMIN_ITER = 310000;
+window.WORKER_URL = 'https://predictor.xmanabanoub.workers.dev';
 window.USER_PASSES = [
   {
     "hash": "88192737c9364f41499acadc2a9c3a89a2454d799df9229b04f276c5cdbc4e8c",

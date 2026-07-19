@@ -219,7 +219,7 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     try {
-      if (url.pathname === '/') return json({ ok: true, service: 'predictor-worker', kv: !!env.KV });
+      if (url.pathname === '/') return json({ ok: true, service: 'predictor-worker', version: 2, autodeploy: true, kv: !!env.KV });
       if (url.pathname === '/xg') return await xgHandler(url);
       if (url.pathname === '/xg-debug') return await xgDebug(url);
 

@@ -400,3 +400,58 @@ html.locked .topbar, html.locked main, html.locked .foot { display: none !import
   .modal-card { padding: 20px 16px; }
   .prob-seg { min-width: 44px; }
 }
+
+/* ---------- الإضافات الاحترافية ---------- */
+
+/* زرار مولد المجموعة */
+.gen-btn {
+  background: linear-gradient(135deg, #9d8cff, #6a55e0); color: #12082e;
+  box-shadow: 0 6px 16px rgba(130, 110, 235, .22);
+}
+.gen-btn:hover:not(:disabled) { box-shadow: 0 9px 22px rgba(130, 110, 235, .32); }
+
+.gen-form { max-width: 460px; }
+.gen-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: var(--muted); }
+.gen-label .admin-select { flex: 0 0 130px; }
+.gen-check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); cursor: pointer; }
+.gen-check input { width: 17px; height: 17px; accent-color: var(--gold); }
+
+/* الرسوم البيانية */
+.chart-title { font-size: 14px; font-weight: 700; color: var(--muted); margin: 14px 0 6px; }
+.chart { width: 100%; height: auto; display: block; }
+.ch-grid { stroke: rgba(255, 255, 255, .07); stroke-width: 1; }
+.ch-zero { stroke: rgba(255, 255, 255, .28); stroke-width: 1; stroke-dasharray: 4 4; }
+.ch-tick { fill: var(--muted); font-size: 13px; font-family: inherit; }
+.ch-last { font-size: 15px; font-weight: 800; font-family: inherit; }
+.ch-pt circle:last-of-type { transition: r .15s; }
+.ch-pt:hover circle:last-of-type { r: 5.5; }
+
+/* ترتيب Elo */
+.elo-row { cursor: default; }
+.elo-rank { flex: 0 0 34px; text-align: center; font-weight: 900; font-size: 15px; color: var(--muted); }
+.elo-rating { font-size: 16px; color: var(--gold); min-width: 48px; text-align: left; }
+.elo-up { color: #43d17c; font-size: 13px; }
+.elo-down { color: #ef5f6e; font-size: 13px; }
+.elo-flat { color: var(--muted); font-size: 13px; }
+
+/* المفضلة */
+.fav-btn {
+  background: none; border: none; cursor: pointer; font-size: 19px;
+  color: var(--gold); padding: 2px 6px; line-height: 1;
+}
+.fav-btn:hover { transform: scale(1.2); }
+.fav-section { border: 1px solid rgba(245, 185, 66, .35); border-radius: 14px; padding: 12px; background: linear-gradient(135deg, rgba(245,185,66,.07), rgba(245,185,66,.015)); }
+
+/* تشريح التوقع */
+.pm-header h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 17px; }
+.pm-score { color: var(--gold); font-size: 20px; }
+.pm-title { font-size: 14px; font-weight: 800; color: var(--gold); margin: 16px 0 8px; }
+.pm-rows { display: flex; flex-direction: column; gap: 6px; }
+.pm-row {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; font-size: 13.5px;
+}
+.pm-row .pm-said { color: var(--muted); flex: 1; text-align: center; }
+.pm-clickable { cursor: pointer; }
+.pm-clickable:hover { border-color: var(--gold); }

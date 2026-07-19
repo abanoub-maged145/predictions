@@ -80,6 +80,18 @@ const loadSlips = () => store.get(slipsKey(), []);
 const saveSlips = s => store.set(slipsKey(), s);
 const loadLearned = () => store.get(learnedKey(), { weights: null, buckets: {}, pillars: {}, settled: 0 });
 
+// الفرق المفضلة — ماتشاتها بتتثبت في أول الصفحة
+const favsKey = () => nsKey('predictor_favs_v1');
+const loadFavs = () => store.get(favsKey(), []);
+const isFav = id => loadFavs().some(f => String(f.id) === String(id));
+function toggleFav(team) {
+  let favs = loadFavs();
+  if (isFav(team.id)) favs = favs.filter(f => String(f.id) !== String(team.id));
+  else favs.push({ id: String(team.id), name: team.name, logo: team.logo || null });
+  store.set(favsKey(), favs);
+  toast(isFav(team.id) ? `⭐ ${team.name} اتضاف لفرقك` : `اتشال ${team.name} من فرقك`);
+}
+
 // ترحيل بيانات النسخة القديمة (قبل الفصل بين المستخدمين) لحساب الأدمن — مرة واحدة
 function migrateLegacyStorage() {
   if (window.AUTH_ROLE !== 'admin') return;
@@ -169,8 +181,12 @@ const EloDB = {
     const gd = Math.abs(hs - as);
     const mult = gd <= 1 ? 1 : gd === 2 ? 1.3 : 1.5 + (gd - 3) * 0.1; // فوز عريض بيحرك التقييم أكتر
     const K = t => t.n < 10 ? 40 : 24; // الفرق الجديدة بتتحرك أسرع لحد ما تستقر
-    h.r = +(h.r + K(h) * mult * (res - exp)).toFixed(1);
-    a.r = +(a.r + K(a) * mult * ((1 - res) - (1 - exp))).toFixed(1);
+    const dH = +(K(h) * mult * (res - exp)).toFixed(1);
+    const dA = +(K(a) * mult * ((1 - res) - (1 - exp))).toFixed(1);
+    h.r = +(h.r + dH).toFixed(1); h.d = dH; // آخر تحرك — لسهم الصعود/الهبوط في الترتيب
+    a.r = +(a.r + dA).toFixed(1); a.d = dA;
+    if (m.home.name) { h.name = m.home.name; h.logo = m.home.logo || h.logo; }
+    if (m.away.name) { a.name = m.away.name; a.logo = m.away.logo || a.logo; }
     h.n++; a.n++;
     d.done[m.id] = 1; d.order.push(m.id);
     while (d.order.length > 4000) delete d.done[d.order.shift()];
@@ -391,6 +407,20 @@ function renderMatches() {
   }
   grid.appendChild(chipbar);
 
+  // ماتشات فرقك المفضلة مثبتة فوق
+  const favIds = new Set(loadFavs().map(f => String(f.id)));
+  if (favIds.size) {
+    const favMatches = filtered.filter(m => favIds.has(String(m.home.id)) || favIds.has(String(m.away.id)));
+    if (favMatches.length) {
+      const section = el('section', 'league-section fav-section');
+      section.appendChild(el('h2', 'league-title', '<span class="league-dot"></span>⭐ فرقك النهارده'));
+      const wrap = el('div', 'match-grid');
+      for (const m of favMatches) wrap.appendChild(matchCard(m));
+      section.appendChild(wrap);
+      grid.appendChild(section);
+    }
+  }
+
   if (!filtered.length) {
     grid.appendChild(el('div', 'empty-state', `<div class="empty-icon">📅</div><h3>مفيش ماتشات في اليوم ده</h3><p>جرب تاريخ تاني من الفلتر فوق — أو ممكن البطولات في فترة توقف.</p>`));
     return;
@@ -509,7 +539,7 @@ function autolog(m, a) {
     id: m.id, league: m.league, kickoff: m.date,
     home: m.home.name, away: m.away.name,
     best: { label: a.best.pickLabel, conf: a.best.conf },
-    markets: a.markets.map(mk => ({ market: mk.market, pickCode: mk.pick, prob: +mk.prob.toFixed(3), mkt: mk.mkt != null ? +mk.mkt.toFixed(3) : null, conf: mk.conf })),
+    markets: a.markets.map(mk => ({ market: mk.market, pickCode: mk.pick, label: mk.pickLabel, prob: +mk.prob.toFixed(3), mkt: mk.mkt != null ? +mk.mkt.toFixed(3) : null, conf: mk.conf })),
     leans: a.pillarLeans,
     modelPick: a.modelPick ?? null, marketPick: a.marketPick ?? null,
     status: 'pending', score: null,
@@ -596,12 +626,12 @@ async function openAnalysis(m) {
 
   body.innerHTML = `
     <div class="an-header">
-      <div class="an-team"><img src="${m.home.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.home.name)}</h3></div>
+      <div class="an-team"><img src="${m.home.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.home.name)}</h3><button class="fav-btn" data-side="home" title="إضافة لفرقك المفضلة">${isFav(m.home.id) ? '⭐' : '☆'}</button></div>
       <div class="an-vs">
         <div class="an-time">${m.state === 'pre' ? fmtTime(m.date) : (m.state === 'in' ? 'مباشر' : `${m.home.score} - ${m.away.score}`)}</div>
         <div class="an-league">${escapeHtml(m.leagueName)}${m.neutralSite ? ' · ملعب محايد 🏟' : ''}</div>
       </div>
-      <div class="an-team"><img src="${m.away.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.away.name)}</h3></div>
+      <div class="an-team"><img src="${m.away.logo || ''}" onerror="this.style.visibility='hidden'"><h3>${escapeHtml(m.away.name)}</h3><button class="fav-btn" data-side="away" title="إضافة لفرقك المفضلة">${isFav(m.away.id) ? '⭐' : '☆'}</button></div>
     </div>
 
     <div class="an-strength">
@@ -663,6 +693,13 @@ async function openAnalysis(m) {
     <p class="preds-hint">الاحتمال = فرصة حدوث التوقع · الشارة الملونة = ثقة النظام (الاحتمال + جودة البيانات + المعايرة الذاتية) · 💎 = نظامنا شايف قيمة أعلى من سعر السوق</p>
     <div class="preds" id="preds-list"></div>
   `;
+
+  body.querySelectorAll('.fav-btn').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    toggleFav(b.dataset.side === 'home' ? m.home : m.away);
+    b.textContent = isFav((b.dataset.side === 'home' ? m.home : m.away).id) ? '⭐' : '☆';
+    if (state.currentView === 'matches') renderCurrent();
+  });
 
   const list = $('#preds-list');
   for (const mk of a.markets) {
@@ -1073,6 +1110,45 @@ function renderStats() {
   `;
   area.appendChild(roiBox);
 
+  // الأداء بمرور الوقت — منحنيات مبنية من السجل المحسوب
+  const chrono = settledLogs.filter(r => r.score).sort((x, y) => new Date(x.kickoff) - new Date(y.kickoff));
+  const accPts = weeklyAccuracy(chrono);
+  const roiPts = cumulativeRoi(chrono);
+  const chartBox = el('div', 'slip-box');
+  chartBox.innerHTML = `
+    <div class="slip-head"><h3>📈 الأداء بمرور الوقت</h3></div>
+    <h4 class="chart-title">دقة التوقعات أسبوع بأسبوع</h4>
+    ${accPts.length >= 2 ? lineChartSVG(accPts, { color: '#f5b942', fmtY: v => Math.round(v) + '%' }) : '<p class="pillar-note">محتاج أسبوعين على الأقل من الماتشات المحسوبة (5+ توقعات في الأسبوع) — بيتبني مع الاستخدام.</p>'}
+    <h4 class="chart-title">الربحية التراكمية (بالوحدات — أفضل توقع لكل ماتش بأسعار السوق)</h4>
+    ${roiPts.length >= 2 ? lineChartSVG(roiPts, { color: '#56bee8', zeroLine: true, fmtY: v => (+v).toFixed(1) }) : '<p class="pillar-note">بيتبني من التوقعات اللي ليها سعر سوق محفوظ — هيظهر بعد كام ماتش محسوب.</p>'}
+  `;
+  area.appendChild(chartBox);
+
+  // سجل الماتشات: اضغط على أي ماتش تشوف تشريح توقعه الكامل
+  if (chrono.length) {
+    const histBox = el('div', 'slip-box');
+    histBox.innerHTML = '<div class="slip-head"><h3>🗂 سجل الماتشات المحسوبة</h3></div><p class="pillar-note" style="margin-bottom:10px">اضغط على أي ماتش تشوف تشريح كامل: إيه اللي كل عمود قاله، ومين صاب ومين غلط.</p>';
+    const list = el('div', 'slip-items');
+    for (const rec of [...chrono].reverse().slice(0, 25)) {
+      const best = rec.markets?.[0];
+      const [h, a] = rec.score.split('-').map(Number);
+      const ok = best ? Engine.evaluatePick({ market: best.market, pickCode: best.pickCode }, h, a) : null;
+      const row = el('div', 'slip-item pm-clickable');
+      row.innerHTML = `
+        <span class="si-status">${ok === null ? '⚪' : ok ? '✅' : '❌'}</span>
+        <div class="si-info">
+          <b>${escapeHtml(rec.home)} ${rec.score.split('-')[0]} - ${rec.score.split('-')[1]} ${escapeHtml(rec.away)}</b>
+          <span>${best ? escapeHtml(marketLabelOf(best, rec)) : '—'} · ${fmtShortDate(rec.kickoff)}</span>
+        </div>
+        ${best ? `<span class="conf-badge ${confClass(best.conf)}">${best.conf}%</span>` : ''}
+      `;
+      row.onclick = () => openPostMortem(rec);
+      list.appendChild(row);
+    }
+    histBox.appendChild(list);
+    area.appendChild(histBox);
+  }
+
   // أوزان الأعمدة المتعلمة
   const w = learned.weights || Engine.DEFAULT_WEIGHTS;
   const pl = learned.pillars;
@@ -1186,6 +1262,264 @@ async function learnFromResults() {
   toast(newly ? `🧠 النظام اتعلم من ${newly} ماتش جديد` : 'مفيش ماتشات جديدة خلصت لسه');
 }
 
+// ---------- رسم بياني خطي خفيف (SVG من غير مكتبات) ----------
+function lineChartSVG(points, { color = '#f5b942', fmtY = v => Math.round(v), zeroLine = false } = {}) {
+  if (points.length < 2) return '';
+  const W = 640, H = 200, P = { t: 18, r: 56, b: 26, l: 10 };
+  const ys = points.map(p => p.y);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (zeroLine) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+  const X = i => P.l + (W - P.l - P.r) * (i / (points.length - 1));
+  const Y = v => P.t + (H - P.t - P.b) * (1 - (v - lo) / (hi - lo));
+  const grid = [0, 0.5, 1].map(f => {
+    const v = lo + (hi - lo) * f;
+    return `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" class="ch-grid"/>` +
+           `<text x="${W - P.r + 8}" y="${(Y(v) + 4).toFixed(1)}" class="ch-tick">${fmtY(v)}</text>`;
+  }).join('');
+  const zero = zeroLine && lo < 0 && hi > 0 ? `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" class="ch-zero"/>` : '';
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join(' ');
+  const last = points[points.length - 1];
+  const dots = points.map((p, i) =>
+    `<g class="ch-pt"><circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="12" fill="transparent"/>` +
+    `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3.5" fill="${color}"/><title>${escapeHtml(p.tip)}</title></g>`
+  ).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img">${grid}${zero}` +
+    `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}` +
+    `<text x="${X(points.length - 1).toFixed(1)}" y="${(Y(last.y) - 10).toFixed(1)}" class="ch-last" fill="${color}" text-anchor="end">${fmtY(last.y)}</text>` +
+    `<text x="${X(0).toFixed(1)}" y="${H - 6}" class="ch-tick" text-anchor="start">${escapeHtml(points[0].x)}</text>` +
+    `<text x="${X(points.length - 1).toFixed(1)}" y="${H - 6}" class="ch-tick" text-anchor="end">${escapeHtml(last.x)}</text></svg>`;
+}
+
+const fmtShortDate = d => new Date(d).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' });
+
+// دقة كل أسبوع (كل الأسواق المتقيمة فيه)
+function weeklyAccuracy(settled) {
+  const weeks = {};
+  for (const rec of settled) {
+    const d = new Date(rec.kickoff);
+    const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const key = fmtDateISO(monday);
+    const [h, a] = rec.score.split('-').map(Number);
+    for (const mk of (rec.markets || [])) {
+      const ok = Engine.evaluatePick({ market: mk.market, pickCode: mk.pickCode }, h, a);
+      if (ok === null) continue;
+      const w = (weeks[key] ??= { hit: 0, total: 0 });
+      w.total++;
+      if (ok) w.hit++;
+    }
+  }
+  return Object.entries(weeks)
+    .filter(([, w]) => w.total >= 5)
+    .sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([k, w]) => ({
+      x: fmtShortDate(k),
+      y: Math.round(w.hit / w.total * 100),
+      tip: `أسبوع ${fmtShortDate(k)}: ${w.hit} صح من ${w.total} (${Math.round(w.hit / w.total * 100)}%)`,
+    }));
+}
+
+// الربحية التراكمية: وحدة على أفضل توقع لكل ماتش بأسعار السوق العادلة
+function cumulativeRoi(settled) {
+  const pts = [];
+  let cum = 0;
+  for (const rec of settled) {
+    const mk = rec.markets?.[0];
+    if (!mk || mk.mkt == null || mk.mkt <= 0) continue;
+    const [h, a] = rec.score.split('-').map(Number);
+    const ok = Engine.evaluatePick({ market: mk.market, pickCode: mk.pickCode }, h, a);
+    if (ok === null) continue;
+    cum += ok ? 1 / mk.mkt - 1 : -1;
+    pts.push({
+      x: fmtShortDate(rec.kickoff),
+      y: +cum.toFixed(2),
+      tip: `${rec.home} × ${rec.away}: ${ok ? `✅ +${(1 / mk.mkt - 1).toFixed(2)}` : '❌ −1.00'} → الرصيد ${cum.toFixed(2)}`,
+    });
+  }
+  return pts;
+}
+
+// ---------- تشريح التوقع بعد الماتش ----------
+const pickText = (code, rec) => code === 'H' ? `فوز ${rec.home}` : code === 'A' ? `فوز ${rec.away}` : 'تعادل';
+function marketLabelOf(mk, rec) {
+  if (mk.label) return mk.label;
+  switch (mk.market) {
+    case '1X2': return pickText(mk.pickCode, rec);
+    case 'DC': return mk.pickCode === '1X' ? `فوز أو تعادل ${rec.home}` : mk.pickCode === 'X2' ? `فوز أو تعادل ${rec.away}` : 'لا تعادل';
+    case 'OU15': case 'OU25': case 'OU35': return `${mk.pickCode === 'O' ? 'أكثر' : 'أقل'} من ${mk.market.slice(2, 3)}.5 هدف`;
+    case 'BTTS': return mk.pickCode === 'Y' ? 'الفريقين يسجلوا' : 'مش هيسجلوا مع بعض';
+    case 'CS': return `النتيجة ${mk.pickCode}`;
+  }
+  return mk.market;
+}
+const MARKET_NAMES = { '1X2': 'نتيجة الماتش', DC: 'فرصة مزدوجة', OU15: 'خط 1.5', OU25: 'خط 2.5', OU35: 'خط 3.5', BTTS: 'تسجيل الفريقين', CS: 'النتيجة بالظبط' };
+
+function openPostMortem(rec) {
+  const [h, a] = rec.score.split('-').map(Number);
+  const actual = h > a ? 'H' : h < a ? 'A' : 'D';
+  const okIcon = ok => ok === null ? '⚪' : ok ? '✅' : '❌';
+  const leanNames = { h2h: '🔄 المواجهات المباشرة', form: '📈 الفورمة', squad: '👥 التشكيلة' };
+
+  const pillarRows = Object.entries(leanNames).map(([k, name]) => {
+    const lean = rec.leans?.[k];
+    if (!lean) return `<div class="pm-row"><span>${name}</span><span class="pm-said">مقالش رأي</span><span>⚪</span></div>`;
+    return `<div class="pm-row"><span>${name}</span><span class="pm-said">قال: ${pickText(lean, rec)}</span><span>${okIcon(lean === actual)}</span></div>`;
+  }).join('');
+
+  const vsMarket = rec.modelPick && rec.marketPick ? `
+    <div class="pm-row"><span>🧠 نموذجنا (قبل دمج السوق)</span><span class="pm-said">قال: ${pickText(rec.modelPick, rec)}</span><span>${okIcon(rec.modelPick === actual)}</span></div>
+    <div class="pm-row"><span>💰 السوق</span><span class="pm-said">قال: ${pickText(rec.marketPick, rec)}</span><span>${okIcon(rec.marketPick === actual)}</span></div>
+  ` : '<p class="pillar-note">مفيش مقارنة نموذج/سوق متسجلة للماتش ده (اتسجل قبل الميزة دي)</p>';
+
+  const marketRows = (rec.markets || []).map(mk => {
+    const ok = Engine.evaluatePick({ market: mk.market, pickCode: mk.pickCode }, h, a);
+    return `<div class="pm-row"><span>${MARKET_NAMES[mk.market] || mk.market}</span><span class="pm-said">${escapeHtml(marketLabelOf(mk, rec))} <small>(ثقة ${mk.conf}%)</small></span><span>${okIcon(ok)}</span></div>`;
+  }).join('');
+
+  $('#modal').classList.remove('hidden');
+  $('#modal-body').innerHTML = `
+    <div class="an-header pm-header">
+      <h3>${escapeHtml(rec.home)} <b class="pm-score">${rec.score.split('-')[0]} - ${rec.score.split('-')[1]}</b> ${escapeHtml(rec.away)}</h3>
+      <p class="pillar-note">${fmtShortDate(rec.kickoff)} · ${escapeHtml(LEAGUE_NAME[rec.league] || rec.league)} — النتيجة الفعلية: <b>${pickText(actual, rec)}</b></p>
+    </div>
+    <h4 class="pm-title">إيه اللي كل عمود قاله؟</h4>
+    <div class="pm-rows">${pillarRows}</div>
+    <h4 class="pm-title">نموذجنا ضد السوق</h4>
+    <div class="pm-rows">${vsMarket}</div>
+    <h4 class="pm-title">كل التوقعات المتسجلة</h4>
+    <div class="pm-rows">${marketRows}</div>
+  `;
+}
+
+// ---------- ترتيب Elo ----------
+function renderEloBoard() {
+  const area = $('#elo-area');
+  const teams = Object.entries(EloDB.load().teams)
+    .map(([id, t]) => ({ id, ...t }))
+    .filter(t => t.n >= 5 && t.name)
+    .sort((x, y) => y.r - x.r)
+    .slice(0, 100);
+
+  area.innerHTML = '';
+  const box = el('div', 'slip-box');
+  box.innerHTML = `
+    <div class="slip-head"><h3>🏆 ترتيب القوة (Elo) — ${teams.length} فريق</h3></div>
+    <p class="pillar-note" style="margin-bottom:12px">
+      مقياس قوة موحد لكل الفرق في كل البطولات، بيتبني تلقائياً من كل نتيجة الموقع بيشوفها —
+      فوز على فريق قوي بيرفعك أكتر، وخسارة من ضعيف بتنزلك أكتر. الفريق بيدخل الترتيب بعد 5 ماتشات متسجلة.
+      السهم بيوضح آخر تحرك.
+    </p>
+    <div id="elo-rows"></div>
+  `;
+  area.appendChild(box);
+
+  const rows = box.querySelector('#elo-rows');
+  if (!teams.length) {
+    rows.innerHTML = '<div class="empty-state"><div class="empty-icon">🏗</div><h3>الترتيب لسه بيتبني</h3><p>كل ما تتصفح ماتشات وتحدث نتايج، الفرق بتتسجل تلقائياً — ارجع بعد كام يوم استخدام.</p></div>';
+    return;
+  }
+  teams.forEach((t, i) => {
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+    const arrow = t.d > 0.5 ? '<span class="elo-up">▲</span>' : t.d < -0.5 ? '<span class="elo-down">▼</span>' : '<span class="elo-flat">—</span>';
+    const row = el('div', 'slip-item elo-row');
+    row.innerHTML = `
+      <span class="elo-rank">${medal}</span>
+      <img src="${t.logo || ''}" onerror="this.style.visibility='hidden'">
+      <div class="si-info"><b>${escapeHtml(t.name)}</b><span>${t.n} ماتش متسجل</span></div>
+      ${arrow}
+      <b class="elo-rating">${Math.round(t.r)}</b>
+    `;
+    rows.appendChild(row);
+  });
+}
+
+// ---------- مولّد المجموعة الذكي ----------
+function openSlipGenerator() {
+  if (state.bulkRunning) return;
+  $('#modal').classList.remove('hidden');
+  $('#modal-body').innerHTML = `
+    <h3 class="preds-title">🎫 اعمل مجموعة النهارده</h3>
+    <p class="pillar-note" style="margin-bottom:14px">بحلل كل ماتشات اليوم وأجمعلك أحسن التوقعات في مجموعة جاهزة حسب شروطك:</p>
+    <form id="gen-form" class="admin-form gen-form">
+      <label class="gen-label">أقل ثقة مقبولة
+        <select id="gen-conf" class="admin-select">
+          <option value="65">65%</option>
+          <option value="70" selected>70%</option>
+          <option value="75">75%</option>
+          <option value="80">80%</option>
+        </select>
+      </label>
+      <label class="gen-label">عدد التوقعات
+        <select id="gen-count" class="admin-select">
+          <option value="3">3</option>
+          <option value="5" selected>5</option>
+          <option value="7">7</option>
+          <option value="10">10</option>
+        </select>
+      </label>
+      <label class="gen-check"><input type="checkbox" id="gen-value" checked> الأولوية لفرص القيمة 💎</label>
+      <label class="gen-check"><input type="checkbox" id="gen-cs"> اسمح بتوقعات «النتيجة بالظبط» (مخاطرة عالية)</label>
+      <button type="submit" class="primary-btn">⚡ حلل واعمل المجموعة</button>
+    </form>
+    <div id="gen-result"></div>
+  `;
+  $('#gen-form').onsubmit = async e => {
+    e.preventDefault();
+    const minConf = +$('#gen-conf').value;
+    const count = +$('#gen-count').value;
+    const preferValue = $('#gen-value').checked;
+    const allowCS = $('#gen-cs').checked;
+    const btn = e.target.querySelector('button');
+    const pre = await bulkAnalyze(btn, '⚡ حلل واعمل المجموعة');
+    if (!pre) return;
+
+    // أحسن توقع مؤهل من كل ماتش — بحد أقصى توقع واحد للماتش عشان المجموعة متبقاش مترابطة
+    const candidates = [];
+    for (const m of pre) {
+      const a = state.analysisCache[m.id];
+      if (!a) continue;
+      const eligible = a.markets.filter(mk => mk.conf >= minConf && (allowCS || mk.market !== 'CS'));
+      if (!eligible.length) continue;
+      const best = [...eligible].sort((x, y) => (preferValue ? (y.value || 0) - (x.value || 0) : 0) || y.conf - x.conf)[0];
+      candidates.push({ m, mk: best });
+    }
+    candidates.sort((x, y) => (preferValue ? (y.mk.value || 0) - (x.mk.value || 0) : 0) || y.mk.conf - x.mk.conf);
+    const chosen = candidates.slice(0, count);
+
+    const result = $('#gen-result');
+    if (!chosen.length) {
+      result.innerHTML = `<p class="pillar-note" style="margin-top:12px">⚠️ مفيش توقعات النهارده بثقة ${minConf}%+ — نزّل الحد شوية أو جرب يوم تاني.</p>`;
+      return;
+    }
+
+    const slips = loadSlips();
+    const slip = { id: Date.now().toString(36), name: `🎫 مجموعة ${fmtDayName(state.date)}`, createdAt: new Date().toISOString(), items: [] };
+    for (const { m, mk } of chosen) {
+      slip.items.push({
+        eventId: m.id, league: m.league, kickoff: m.date,
+        homeName: m.home.name, awayName: m.away.name,
+        homeLogo: m.home.logo, awayLogo: m.away.logo,
+        market: mk.market, marketLabel: mk.marketLabel,
+        pickCode: mk.pick, pickLabel: mk.pickLabel,
+        prob: mk.prob, conf: mk.conf,
+        status: 'pending', finalScore: null,
+      });
+    }
+    slips.push(slip);
+    saveSlips(slips);
+
+    result.innerHTML = `
+      <h4 class="pm-title">✅ اتعملت مجموعة «${escapeHtml(slip.name)}» — ${chosen.length} توقع:</h4>
+      <div class="pm-rows">
+        ${chosen.map(({ m, mk }) => `<div class="pm-row"><span>${escapeHtml(m.home.name)} × ${escapeHtml(m.away.name)}</span><span class="pm-said">${escapeHtml(mk.pickLabel)}${mk.value ? ' 💎' : ''}</span><span class="conf-badge ${confClass(mk.conf)}">${mk.conf}%</span></div>`).join('')}
+      </div>
+      <p class="pillar-note" style="margin-top:10px">هتلاقيها في تبويب «📂 مجموعاتي» — وبعد الماتشات دوس «حدّث النتائج» هناك.</p>
+    `;
+    renderCurrent();
+  };
+}
+
 // ---------- المزامنة بين الأجهزة ----------
 // البيانات بتتشفر AES-GCM بمفتاح مشتق من كلمة السر نفسها (PBKDF2) —
 // فبتتفك على أي جهاز داخل بنفس الباسورد، ومحدش تاني يقدر يقراها حتى لو الملف عام
@@ -1206,6 +1540,7 @@ function collectMyData() {
     autolog: store.get(autologKey(), []),
     learned: loadLearned(),
     elo: store.get(ELO_KEY, null),
+    favs: loadFavs(),
   };
 }
 
@@ -1236,6 +1571,13 @@ function mergeMyData(incoming) {
 
   const learned = loadLearned();
   if ((incoming.learned?.settled || 0) > (learned.settled || 0)) store.set(learnedKey(), incoming.learned);
+
+  // الفرق المفضلة: اتحاد الاتنين
+  if (Array.isArray(incoming.favs)) {
+    const favs = loadFavs();
+    for (const f of incoming.favs) if (!favs.some(x => String(x.id) === String(f.id))) favs.push(f);
+    store.set(favsKey(), favs);
+  }
 
   // قاعدة Elo: لكل فريق ناخد النسخة اللي شافت ماتشات أكتر
   if (incoming.elo?.teams) {
@@ -1690,10 +2032,12 @@ function switchView(view) {
   $('#view-matches').classList.toggle('hidden', view !== 'matches');
   $('#view-slips').classList.toggle('hidden', view !== 'slips');
   $('#view-stats').classList.toggle('hidden', view !== 'stats');
+  $('#view-elo').classList.toggle('hidden', view !== 'elo');
   $('#view-admin').classList.toggle('hidden', view !== 'admin');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'slips') renderSlips();
   if (view === 'stats') renderStats();
+  if (view === 'elo') renderEloBoard();
   if (view === 'admin') renderAdmin();
 }
 
@@ -1727,6 +2071,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#date-input').onchange = e => { const [y, mo, da] = e.target.value.split('-').map(Number); if (y) setDate(new Date(y, mo - 1, da)); };
   $('#btn-top-picks').onclick = analyzeAll;
   $('#btn-value-picks').onclick = showValuePicks;
+  $('#btn-auto-slip').onclick = openSlipGenerator;
   // PWA: الموقع يتسطب كتطبيق ويفتح حتى لو النت فاصل (آخر نسخة متخزنة)
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { /* مش متاح */ });
   document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => switchView(b.dataset.view));

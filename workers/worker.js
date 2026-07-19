@@ -79,16 +79,26 @@ async function discoverTeams(slug, { verbose = false } = {}) {
 
   const season = (page.match(/name="season"[\s\S]{0,400}?value="(\d{4})"\s+selected/) || [])[1] || String(new Date().getFullYear());
   const leagueName = UNDERSTAT_NAME[slug] || slug.replace(/_/g, ' ');
+  const enc = encodeURIComponent(leagueName);
 
-  // مرشحين من ملف الجافاسكريبت بتاعهم + تخمينات معقولة
-  const candidates = new Set();
+  // نقرا ملف league.min.js ونستخرج منه نمط نداء البيانات الحقيقي
+  // (اكتشفناه: getLeagueData/"+league+"/"+season). بندوّر على أي url:"..."+league+...
+  const urlBuilders = [];
   const jsSrc = (page.match(/src=["']([^"']*league[^"']*\.js[^"']*)["']/i) || [])[1];
   let jsSnippets = [];
   if (jsSrc) {
     try {
       const js = await (await fetch(new URL(jsSrc, 'https://understat.com/').href, { headers: { ...BROWSER_HEADERS, 'Accept': '*/*' } })).text();
-      for (const m of js.matchAll(/["']([A-Za-z0-9_\-/.]{3,50}(?:get|Get|data|Data|teams|Teams|stats|Stats)[A-Za-z0-9_\-/.]{0,40})["']/g)) {
-        if (!/\.(js|css|png|svg|html)/.test(m[1])) candidates.add(m[1].replace(/^\//, ''));
+      // نمط: url:"PREFIX/"+league+"/"+season  →  PREFIX/{league}/{season}
+      for (const m of js.matchAll(/url\s*:\s*["']([A-Za-z0-9_\-/]+\/)["']\s*\+\s*league\s*\+\s*["']\/["']\s*\+\s*season/g)) {
+        urlBuilders.push({ url: `https://understat.com/${m[1]}${enc}/${season}`, label: `GET ${m[1]}{league}/{season}` });
+      }
+      // نمط عام: url:"SOMEPATH"  لأي مسار فيه get/data/league/team
+      for (const m of js.matchAll(/url\s*:\s*["']([A-Za-z0-9_\-/]{4,60})["']/g)) {
+        if (/get|data|league|team|stat/i.test(m[1]) && !/\.(js|css|png)/.test(m[1])) {
+          const base = m[1].replace(/\/$/, '');
+          urlBuilders.push({ url: `https://understat.com/${base}/${enc}/${season}`, label: `GET ${base}/{league}/{season}` });
+        }
       }
       if (verbose) {
         for (const m of js.matchAll(/\$\.(ajax|post|get|getJSON)\s*\(/g)) {
@@ -98,33 +108,31 @@ async function discoverTeams(slug, { verbose = false } = {}) {
       }
     } catch { /* الملف مش متاح */ }
   }
-  for (const c of ['league/getTeams', 'main/getLeagueTeams', 'main/getTeamsStats', 'getLeagueTeams', 'league/getTeamsData']) candidates.add(c);
+  // النقطة المعروفة الأكيدة أول القايمة (اتأكدنا منها من الـ jsSnippets)
+  urlBuilders.unshift({ url: `https://understat.com/getLeagueData/${enc}/${season}`, label: 'GET getLeagueData/{league}/{season}' });
 
   const tried = [];
-  for (const cand of [...candidates].slice(0, 12)) {
-    for (const method of ['POST', 'GET']) {
-      try {
-        const target = method === 'GET'
-          ? `https://understat.com/${cand}?league=${encodeURIComponent(leagueName)}&season=${season}`
-          : `https://understat.com/${cand}`;
-        const res = await fetch(target, {
-          method,
-          headers: {
-            ...BROWSER_HEADERS,
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': `https://understat.com/league/${slug}`,
-            ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' } : {}),
-          },
-          body: method === 'POST' ? `league=${encodeURIComponent(leagueName)}&season=${season}` : undefined,
-        });
-        const text = await res.text();
-        if (verbose) tried.push({ url: `${method} /${cand}`, status: res.status, sample: text.slice(0, 300) });
-        if (!res.ok) continue;
-        const teams = teamsFrom(JSON.parse(text));
-        if (teams) return { teams, endpoint: `${method} /${cand}`, tried, jsSnippets };
-      } catch { if (verbose) tried.push({ url: `${method} /${cand}`, status: 'err' }); }
-    }
+  const seen = new Set();
+  for (const { url: target, label } of urlBuilders) {
+    if (seen.has(target)) continue;
+    seen.add(target);
+    try {
+      const res = await fetch(target, {
+        headers: {
+          ...BROWSER_HEADERS,
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': `https://understat.com/league/${slug}`,
+        },
+      });
+      const text = await res.text();
+      if (verbose) tried.push({ url: label, status: res.status, sample: text.slice(0, 200) });
+      if (!res.ok) continue;
+      const j = JSON.parse(text);
+      const teams = teamsFrom(j.teams ?? j); // البيانات جوه data.teams
+      if (teams) return { teams, endpoint: label, tried, jsSnippets };
+    } catch { if (verbose) tried.push({ url: label, status: 'err' }); }
+    if (seen.size >= 14) break;
   }
   return { teams: null, endpoint: null, tried, jsSnippets, pageLength: page.length };
 }

@@ -948,6 +948,127 @@ async function showValuePicks() {
 }
 
 // ---------- المجموعات المحفوظة ----------
+// ---------- إعدادات 1xBet (مربوطة بباسورد المستخدم، معزولة عن غيره) ----------
+const xbetKey = () => nsKey('predictor_1xbet_v1');
+const load1xbet = () => store.get(xbetKey(), { base: 'https://1xbet.com', account: '' });
+const save1xbet = v => store.set(xbetKey(), v);
+
+// أودز عشرية تقديرية: من سعر السوق العادل لو متوفر، وإلا من احتمال نموذجنا
+const oddsOf = it => {
+  const p = (it.mkt && it.mkt > 0) ? it.mkt : it.prob;
+  return (p && p > 0) ? 1 / p : null;
+};
+const fmtOdds = o => o ? o.toFixed(2) : '—';
+
+// رابط البحث عن الماتش في 1xBet — بيفتح التطبيق لو متسطب، وإلا الموقع
+function xbetSearchUrl(it) {
+  const { base } = load1xbet();
+  const clean = (base || 'https://1xbet.com').replace(/\/+$/, '');
+  const q = encodeURIComponent(`${it.homeName} ${it.awayName}`);
+  return `${clean}/en/search?query=${q}`;
+}
+
+// نص القسيمة المنسّق للنسخ
+function buildCouponText(slipName, items) {
+  const lines = [`🎫 ${slipName} — ${items.length} توقع`, ''];
+  let total = 1;
+  items.forEach((it, i) => {
+    const o = oddsOf(it);
+    if (o) total *= o;
+    lines.push(`${i + 1}) ${it.homeName} × ${it.awayName}`);
+    lines.push(`   ${it.pickLabel} (${it.marketLabel}) — أودز تقديري ${fmtOdds(o)}`);
+  });
+  lines.push('', `الأودز الإجمالي التقديري: ${total.toFixed(2)}`);
+  lines.push('(أودز تقديرية — الأرقام الفعلية من 1xBet وقت الرهان)');
+  return lines.join('\n');
+}
+
+// نافذة تحويل مجموعة لقسيمة 1xBet — اختيار التوقعات + نسخ + فتح كل ماتش
+function openCoupon(slip) {
+  const modal = $('#modal');
+  const body = $('#modal-body');
+  modal.classList.remove('hidden');
+  const cfg = load1xbet();
+  // نبدأ باختيار الماتشات اللي لسه مبدأتش (مناسبة للرهان)
+  const picked = new Set(slip.items.filter(it => new Date(it.kickoff).getTime() > Date.now()).map(it => it.eventId + '|' + it.market));
+  const keyOf = it => it.eventId + '|' + it.market;
+
+  const render = () => {
+    const chosen = slip.items.filter(it => picked.has(keyOf(it)));
+    const rows = slip.items.map(it => {
+      const k = keyOf(it);
+      const started = new Date(it.kickoff).getTime() <= Date.now();
+      return `
+        <label class="cp-item ${started ? 'cp-started' : ''}">
+          <input type="checkbox" data-k="${escapeHtml(k)}" ${picked.has(k) ? 'checked' : ''}>
+          <div class="cp-info">
+            <b>${escapeHtml(it.homeName)} × ${escapeHtml(it.awayName)}</b>
+            <span>${escapeHtml(it.pickLabel)} · ${it.marketLabel} · أودز ~${fmtOdds(oddsOf(it))}${started ? ' · بدأ/انتهى' : ''}</span>
+          </div>
+          <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}">🔗 افتح في 1xBet</button>
+        </label>`;
+    }).join('');
+
+    const coupon = chosen.length ? buildCouponText(slip.name, chosen) : '';
+    body.innerHTML = `
+      <h3 class="preds-title">📋 حوّل «${escapeHtml(slip.name)}» لقسيمة 1xBet</h3>
+      <p class="pillar-note" style="margin-bottom:12px">
+        اختار التوقعات، افتح كل ماتش في 1xBet بالزرار جنبه وضيفه لقسيمتك هناك، وانت اللي بتحدد تدخل بكام.
+        <b>الأودز هنا تقديرية</b> — الرقم الفعلي بيظهر في 1xBet وقت الرهان.
+      </p>
+      <div class="cp-list">${rows}</div>
+
+      <div class="cp-total">القسيمة: <b>${chosen.length}</b> توقع · الأودز الإجمالي التقديري: <b>${chosen.reduce((t, it) => t * (oddsOf(it) || 1), 1).toFixed(2)}</b></div>
+
+      <textarea id="cp-text" class="cp-text" rows="7" readonly>${escapeHtml(coupon)}</textarea>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+        <button id="cp-copy" class="primary-btn" ${chosen.length ? '' : 'disabled'}>📋 انسخ القسيمة</button>
+        <button id="cp-openall" class="save-btn" ${chosen.length ? '' : 'disabled'}>🔗 افتح كل الماتشات</button>
+      </div>
+
+      <details class="cp-settings">
+        <summary>⚙️ إعدادات 1xBet بتاعتك</summary>
+        <p class="pillar-note" style="margin:8px 0">
+          محفوظة على حسابك بس (مربوطة بباسوردك) ومعزولة عن أي مستخدم تاني.
+          لو 1xBet مقفول عندك أو بتستخدم رابط مرآة، غيّر الرابط هنا.
+        </p>
+        <label class="gen-label">رابط 1xBet
+          <input type="url" id="cp-base" dir="ltr" value="${escapeHtml(cfg.base || '')}" placeholder="https://1xbet.com" style="flex:1">
+        </label>
+        <label class="gen-label" style="margin-top:8px">حسابك في 1xBet (اختياري)
+          <input type="text" id="cp-account" value="${escapeHtml(cfg.account || '')}" placeholder="رقم/اسم حسابك — للتذكرة بس" style="flex:1">
+        </label>
+        <button id="cp-save-cfg" class="save-btn" style="margin-top:8px">💾 احفظ الإعدادات</button>
+      </details>
+    `;
+
+    body.querySelectorAll('.cp-item input[type=checkbox]').forEach(cb => cb.onchange = () => {
+      if (cb.checked) picked.add(cb.dataset.k); else picked.delete(cb.dataset.k);
+      render();
+    });
+    body.querySelectorAll('.cp-open').forEach(b => b.onclick = e => {
+      e.preventDefault();
+      const it = slip.items.find(x => keyOf(x) === b.dataset.k);
+      if (it) window.open(xbetSearchUrl(it), '_blank');
+    });
+    const copyBtn = $('#cp-copy');
+    if (copyBtn) copyBtn.onclick = async () => {
+      const txt = $('#cp-text').value;
+      try { await navigator.clipboard.writeText(txt); toast('📋 اتنسخت القسيمة'); }
+      catch { $('#cp-text').select(); document.execCommand('copy'); toast('📋 اتنسخت القسيمة'); }
+    };
+    const openAll = $('#cp-openall');
+    if (openAll) openAll.onclick = () => {
+      chosen.slice(0, 8).forEach((it, i) => setTimeout(() => window.open(xbetSearchUrl(it), '_blank'), i * 400));
+    };
+    $('#cp-save-cfg').onclick = () => {
+      save1xbet({ base: $('#cp-base').value.trim() || 'https://1xbet.com', account: $('#cp-account').value.trim() });
+      toast('✅ اتحفظت إعدادات 1xBet');
+    };
+  };
+  render();
+}
+
 function saveToSlip(m, mk) {
   const slips = loadSlips();
   let choice;
@@ -975,7 +1096,7 @@ function saveToSlip(m, mk) {
     homeLogo: m.home.logo, awayLogo: m.away.logo,
     market: mk.market, marketLabel: mk.marketLabel,
     pickCode: mk.pick, pickLabel: mk.pickLabel,
-    prob: mk.prob, conf: mk.conf,
+    prob: mk.prob, mkt: mk.mkt ?? null, conf: mk.conf,
     status: 'pending', finalScore: null,
   });
   saveSlips(slips);
@@ -1039,10 +1160,12 @@ function renderSlips() {
         <h3>📂 ${escapeHtml(slip.name)}</h3>
         <div class="slip-head-side">
           <span class="slip-stat">${sSettled ? `${sWon}/${sSettled} صح` : `${slip.items.length} توقع`}</span>
+          <button class="coupon-btn" title="حوّل لقسيمة 1xBet">📋 1xBet</button>
           <button class="del-btn" title="حذف المجموعة">🗑</button>
         </div>
       </div>
     `;
+    box.querySelector('.coupon-btn').onclick = () => openCoupon(slip);
     box.querySelector('.del-btn').onclick = () => {
       if (!confirm(`متأكد إنك عايز تحذف مجموعة «${slip.name}»؟`)) return;
       saveSlips(loadSlips().filter(s => s.id !== slip.id));
@@ -1868,6 +1991,7 @@ function collectMyData() {
     learned: loadLearned(),
     elo: store.get(ELO_KEY, null),
     favs: loadFavs(),
+    xbet: load1xbet(),
   };
 }
 
@@ -1908,6 +2032,9 @@ function mergeMyData(incoming) {
 
   // قاعدة Elo: لكل فريق ناخد النسخة اللي شافت ماتشات أكتر
   if (incoming.elo?.teams) EloDB.merge(incoming.elo);
+
+  // إعدادات 1xBet: لو الجهاز ده لسه ما ظبطهاش، خد اللي جاي
+  if (incoming.xbet && !store.get(xbetKey(), null)) save1xbet(incoming.xbet);
 
   state.analysisCache = {};
 }

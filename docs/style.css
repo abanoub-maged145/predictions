@@ -268,8 +268,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 22px 20px 60px; }
   padding: 7px 14px; border-radius: 9px; cursor: pointer;
   background: var(--card2); color: var(--text); border: 1px solid var(--border);
   transition: .15s;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .save-btn:hover { border-color: var(--gold); color: var(--gold); }
+a.save-btn { text-decoration: none; }
+a.cp-open { background: rgba(46, 204, 113, .14); color: var(--green); border-color: rgba(46, 204, 113, .4); }
 
 /* ---------- المجموعات ---------- */
 .slips-header {

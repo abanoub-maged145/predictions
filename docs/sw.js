@@ -3,7 +3,7 @@
 // حتى لو النت فاصل. الاستراتيجية: الشبكة الأول (عشان التحديثات
 // وكلمات السر توصل فوراً) والكاش احتياطي لو النت وقع.
 // ============================================================
-const CACHE = 'predictor-v6';
+const CACHE = 'predictor-v7';
 const SHELL = ['./', 'index.html', 'style.css', 'config.js', 'auth.js', 'engine.js', 'app.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {

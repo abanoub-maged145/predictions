@@ -966,16 +966,12 @@ function xbetHome() {
   return (base || 'https://1xbet.com').replace(/\/+$/, '');
 }
 
-// رابط بحث الماتش مباشرة على 1xBet — بيوديك على نتيجة البحث على طول
-function xbetSearchUrl(it) {
-  const q = encodeURIComponent(`${it.homeName} ${it.awayName}`).replace(/%20/g, '+');
-  return `${xbetHome()}/en/search-events?searchtext=${q}`;
-}
-
-// نسخ اسم الماتش احتياطي (لو البحث ملقاش بالأسماء دي)
+// نسخ اسم الماتش عشان تلزقه في بحث 1xBet
 function copyMatchName(it) {
   const q = `${it.homeName} ${it.awayName}`;
-  navigator.clipboard?.writeText(q).catch(() => { /* مش متاح */ });
+  const done = () => toast('📋 اسم الماتش اتنسخ — الصقه في بحث 1xBet');
+  if (navigator.clipboard) navigator.clipboard.writeText(q).then(done).catch(done);
+  else done();
 }
 
 // نص القسيمة المنسّق للنسخ
@@ -1015,7 +1011,7 @@ function openCoupon(slip) {
             <b>${escapeHtml(it.homeName)} × ${escapeHtml(it.awayName)}</b>
             <span>${escapeHtml(it.pickLabel)} · ${it.marketLabel} · أودز ~${fmtOdds(oddsOf(it))}${started ? ' · بدأ/انتهى' : ''}</span>
           </div>
-          <a class="cp-open save-btn" data-k="${escapeHtml(k)}" href="${escapeHtml(xbetSearchUrl(it))}" target="_blank" rel="noopener">🔎 دوّر عليه</a>
+          <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}">📋 انسخ الاسم</button>
         </label>`;
     }).join('');
 
@@ -1023,9 +1019,9 @@ function openCoupon(slip) {
     body.innerHTML = `
       <h3 class="preds-title">📋 حوّل «${escapeHtml(slip.name)}» لقسيمة 1xBet</h3>
       <p class="pillar-note" style="margin-bottom:12px">
-        ⚠️ <b>أول مرة بس:</b> افتح ⚙️ تحت وحط رابط 1xBet بتاعك (<span dir="ltr">https://eg1xbet.com</span>) واحفظ.<br>
-        زرار <b>«🔎 دوّر عليه»</b> بيفتحلك الماتش في بحث 1xBet على طول — ضيفه لقسيمتك وانت اللي بتحدد تدخل بكام.
-        <b>الأودز تقديرية</b> — الرقم الفعلي بيظهر وقت الرهان. (لو ماتش مطلعش، اسمه اتنسخ فدوّر بجزء منه).
+        زرار <b>«📋 انسخ الاسم»</b> جنب كل ماتش بينسخ اسمه — افتح 1xBet بنفسك، دوس بحث 🔎 والصقه، وضيفه لقسيمتك.
+        وزرار <b>«📋 انسخ القسيمة»</b> تحت بينسخ القسيمة كلها مرة واحدة.
+        <b>الأودز تقديرية</b> — الرقم الفعلي بيظهر في 1xBet وقت الرهان، وانت اللي بتحدد تدخل بكام.
       </p>
       <div class="cp-list">${rows}</div>
 

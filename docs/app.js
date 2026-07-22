@@ -960,12 +960,18 @@ const oddsOf = it => {
 };
 const fmtOdds = o => o ? o.toFixed(2) : '—';
 
-// رابط البحث عن الماتش في 1xBet — بيفتح التطبيق لو متسطب، وإلا الموقع
-function xbetSearchUrl(it) {
+// الصفحة الرئيسية لـ 1xBet بتاع المستخدم (بتفتح التطبيق لو متسطب على نفس الدومين)
+function xbetHome() {
   const { base } = load1xbet();
-  const clean = (base || 'https://1xbet.com').replace(/\/+$/, '');
-  const q = encodeURIComponent(`${it.homeName} ${it.awayName}`);
-  return `${clean}/en/search?query=${q}`;
+  return (base || 'https://1xbet.com').replace(/\/+$/, '');
+}
+
+// يفتح 1xBet وينسخ اسم الماتش — عشان تدوس بحث وتلزق (مضمون على أي مرآة)
+function openInXbet(it) {
+  window.open(xbetHome(), '_blank');          // الأول عشان نحافظ على لمسة المستخدم
+  const q = `${it.homeName} ${it.awayName}`;
+  navigator.clipboard?.writeText(q).catch(() => { /* مش متاح */ });
+  toast('📋 اسم الماتش اتنسخ — افتح البحث 🔎 في 1xBet والصقه');
 }
 
 // نص القسيمة المنسّق للنسخ
@@ -1005,7 +1011,7 @@ function openCoupon(slip) {
             <b>${escapeHtml(it.homeName)} × ${escapeHtml(it.awayName)}</b>
             <span>${escapeHtml(it.pickLabel)} · ${it.marketLabel} · أودز ~${fmtOdds(oddsOf(it))}${started ? ' · بدأ/انتهى' : ''}</span>
           </div>
-          <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}">🔗 افتح في 1xBet</button>
+          <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}">🔎 دوّر في 1xBet</button>
         </label>`;
     }).join('');
 
@@ -1013,8 +1019,9 @@ function openCoupon(slip) {
     body.innerHTML = `
       <h3 class="preds-title">📋 حوّل «${escapeHtml(slip.name)}» لقسيمة 1xBet</h3>
       <p class="pillar-note" style="margin-bottom:12px">
-        اختار التوقعات، افتح كل ماتش في 1xBet بالزرار جنبه وضيفه لقسيمتك هناك، وانت اللي بتحدد تدخل بكام.
-        <b>الأودز هنا تقديرية</b> — الرقم الفعلي بيظهر في 1xBet وقت الرهان.
+        اختار التوقعات، والزرار جنب كل ماتش بيفتح 1xBet وينسخلك اسمه — دوس بحث 🔎 والصقه وضيفه لقسيمتك،
+        وانت اللي بتحدد تدخل بكام. <b>الأودز هنا تقديرية</b> — الرقم الفعلي بيظهر في 1xBet وقت الرهان.
+        ⚠️ أول مرة: افتح ⚙️ تحت وحط رابط 1xBet بتاعك (مثلاً <span dir="ltr">https://eg1xbet.com</span>).
       </p>
       <div class="cp-list">${rows}</div>
 
@@ -1023,7 +1030,7 @@ function openCoupon(slip) {
       <textarea id="cp-text" class="cp-text" rows="7" readonly>${escapeHtml(coupon)}</textarea>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
         <button id="cp-copy" class="primary-btn" ${chosen.length ? '' : 'disabled'}>📋 انسخ القسيمة</button>
-        <button id="cp-openall" class="save-btn" ${chosen.length ? '' : 'disabled'}>🔗 افتح كل الماتشات</button>
+        <button id="cp-openx" class="save-btn">🎫 افتح 1xBet</button>
       </div>
 
       <details class="cp-settings">
@@ -1049,7 +1056,7 @@ function openCoupon(slip) {
     body.querySelectorAll('.cp-open').forEach(b => b.onclick = e => {
       e.preventDefault();
       const it = slip.items.find(x => keyOf(x) === b.dataset.k);
-      if (it) window.open(xbetSearchUrl(it), '_blank');
+      if (it) openInXbet(it);
     });
     const copyBtn = $('#cp-copy');
     if (copyBtn) copyBtn.onclick = async () => {
@@ -1057,10 +1064,8 @@ function openCoupon(slip) {
       try { await navigator.clipboard.writeText(txt); toast('📋 اتنسخت القسيمة'); }
       catch { $('#cp-text').select(); document.execCommand('copy'); toast('📋 اتنسخت القسيمة'); }
     };
-    const openAll = $('#cp-openall');
-    if (openAll) openAll.onclick = () => {
-      chosen.slice(0, 8).forEach((it, i) => setTimeout(() => window.open(xbetSearchUrl(it), '_blank'), i * 400));
-    };
+    const openX = $('#cp-openx');
+    if (openX) openX.onclick = () => window.open(xbetHome(), '_blank');
     $('#cp-save-cfg').onclick = () => {
       save1xbet({ base: $('#cp-base').value.trim() || 'https://1xbet.com', account: $('#cp-account').value.trim() });
       toast('✅ اتحفظت إعدادات 1xBet');

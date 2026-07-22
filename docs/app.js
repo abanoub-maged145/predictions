@@ -960,17 +960,22 @@ const oddsOf = it => {
 };
 const fmtOdds = o => o ? o.toFixed(2) : '—';
 
-// الصفحة الرئيسية لـ 1xBet بتاع المستخدم (بتفتح التطبيق لو متسطب على نفس الدومين)
+// الصفحة الرئيسية لـ 1xBet بتاع المستخدم
 function xbetHome() {
   const { base } = load1xbet();
   return (base || 'https://1xbet.com').replace(/\/+$/, '');
 }
 
-// عند الضغط على رابط 1xBet: بننسخ اسم الماتش (الرابط نفسه بيفتح التطبيق/الموقع)
+// رابط بحث الماتش مباشرة على 1xBet — بيوديك على نتيجة البحث على طول
+function xbetSearchUrl(it) {
+  const q = encodeURIComponent(`${it.homeName} ${it.awayName}`).replace(/%20/g, '+');
+  return `${xbetHome()}/en/search-events?searchtext=${q}`;
+}
+
+// نسخ اسم الماتش احتياطي (لو البحث ملقاش بالأسماء دي)
 function copyMatchName(it) {
   const q = `${it.homeName} ${it.awayName}`;
   navigator.clipboard?.writeText(q).catch(() => { /* مش متاح */ });
-  toast('📋 اسم الماتش اتنسخ — دوس بحث 🔎 في 1xBet والصقه');
 }
 
 // نص القسيمة المنسّق للنسخ
@@ -1010,7 +1015,7 @@ function openCoupon(slip) {
             <b>${escapeHtml(it.homeName)} × ${escapeHtml(it.awayName)}</b>
             <span>${escapeHtml(it.pickLabel)} · ${it.marketLabel} · أودز ~${fmtOdds(oddsOf(it))}${started ? ' · بدأ/انتهى' : ''}</span>
           </div>
-          <a class="cp-open save-btn" data-k="${escapeHtml(k)}" href="${escapeHtml(xbetHome())}" target="_blank" rel="noopener">🎫 افتح 1xBet</a>
+          <a class="cp-open save-btn" data-k="${escapeHtml(k)}" href="${escapeHtml(xbetSearchUrl(it))}" target="_blank" rel="noopener">🔎 دوّر عليه</a>
         </label>`;
     }).join('');
 
@@ -1019,8 +1024,8 @@ function openCoupon(slip) {
       <h3 class="preds-title">📋 حوّل «${escapeHtml(slip.name)}» لقسيمة 1xBet</h3>
       <p class="pillar-note" style="margin-bottom:12px">
         ⚠️ <b>أول مرة بس:</b> افتح ⚙️ تحت وحط رابط 1xBet بتاعك (<span dir="ltr">https://eg1xbet.com</span>) واحفظ.<br>
-        بعدها: الزرار جنب كل ماتش بينسخ اسمه ويفتح 1xBet — لو التطبيق متسطب بيفتح فيه على طول، دوس بحث 🔎 والصق.
-        <b>الأودز تقديرية</b> — الرقم الفعلي بيظهر وقت الرهان، وانت اللي بتحدد تدخل بكام.
+        زرار <b>«🔎 دوّر عليه»</b> بيفتحلك الماتش في بحث 1xBet على طول — ضيفه لقسيمتك وانت اللي بتحدد تدخل بكام.
+        <b>الأودز تقديرية</b> — الرقم الفعلي بيظهر وقت الرهان. (لو ماتش مطلعش، اسمه اتنسخ فدوّر بجزء منه).
       </p>
       <div class="cp-list">${rows}</div>
 

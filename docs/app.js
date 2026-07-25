@@ -1905,12 +1905,7 @@ function openSlipGenerator() {
         </select>
       </label>
       <label class="gen-label">عدد التوقعات
-        <select id="gen-count" class="admin-select">
-          <option value="3">3</option>
-          <option value="5" selected>5</option>
-          <option value="7">7</option>
-          <option value="10">10</option>
-        </select>
+        <input type="number" id="gen-count" class="admin-select" value="5" min="1" max="50" step="1" inputmode="numeric" placeholder="أي رقم">
       </label>
       <label class="gen-check"><input type="checkbox" id="gen-value" checked> الأولوية لفرص القيمة 💎</label>
       <label class="gen-check"><input type="checkbox" id="gen-cs"> اسمح بتوقعات «النتيجة بالظبط» (مخاطرة عالية)</label>
@@ -1921,7 +1916,7 @@ function openSlipGenerator() {
   $('#gen-form').onsubmit = async e => {
     e.preventDefault();
     const minConf = +$('#gen-conf').value;
-    const count = +$('#gen-count').value;
+    const count = Math.max(1, parseInt($('#gen-count').value, 10) || 5); // أي رقم، وأقلها 1
     const preferValue = $('#gen-value').checked;
     const allowCS = $('#gen-cs').checked;
     const btn = e.target.querySelector('button');

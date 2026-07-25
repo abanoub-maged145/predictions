@@ -1009,6 +1009,7 @@ function openCoupon(slip) {
           <input type="checkbox" data-k="${escapeHtml(k)}" ${picked.has(k) ? 'checked' : ''}>
           <div class="cp-info">
             <b>${escapeHtml(it.homeName)} × ${escapeHtml(it.awayName)}</b>
+            <span class="si-league">🏆 ${escapeHtml(LEAGUE_NAME[it.league] || it.league)}</span>
             <span>${escapeHtml(it.pickLabel)} · ${it.marketLabel} · أودز ~${fmtOdds(oddsOf(it))}${started ? ' · بدأ/انتهى' : ''}</span>
           </div>
           <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}">📋 انسخ الاسم</button>
@@ -1185,6 +1186,7 @@ function renderSlips() {
         <img src="${it.awayLogo || ''}" onerror="this.style.visibility='hidden'">
         <div class="si-info">
           <b>${escapeHtml(it.homeName)} × ${escapeHtml(it.awayName)}</b>
+          <span class="si-league">🏆 ${escapeHtml(LEAGUE_NAME[it.league] || it.league)}</span>
           <span>${escapeHtml(it.pickLabel)} (${it.marketLabel}) · احتمال ${Math.round(it.prob * 100)}%${it.finalScore ? ` — النتيجة ${it.finalScore}` : ''}</span>
         </div>
         <span class="si-date">${new Date(it.kickoff).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })}</span>

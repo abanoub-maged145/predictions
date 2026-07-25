@@ -31,6 +31,78 @@ const LEAGUE_BY_ABBR = {
   'Serie A': 'ita.1', 'Bund': 'ger.1', 'Ligue 1': 'fra.1', 'UCL': 'uefa.champions', 'UEL': 'uefa.europa',
 };
 
+// أسماء الفرق بالعربي — للنسخ لبحث 1xBet (لو الفريق مش موجود بيرجع الاسم الإنجليزي)
+const TEAM_AR = {
+  // الدوري الإنجليزي
+  'Arsenal': 'آرسنال', 'Aston Villa': 'أستون فيلا', 'AFC Bournemouth': 'بورنموث', 'Bournemouth': 'بورنموث',
+  'Brentford': 'برنتفورد', 'Brighton & Hove Albion': 'برايتون', 'Brighton': 'برايتون', 'Burnley': 'بيرنلي',
+  'Chelsea': 'تشيلسي', 'Crystal Palace': 'كريستال بالاس', 'Everton': 'إيفرتون', 'Fulham': 'فولهام',
+  'Liverpool': 'ليفربول', 'Luton Town': 'لوتون', 'Manchester City': 'مانشستر سيتي', 'Manchester United': 'مانشستر يونايتد',
+  'Newcastle United': 'نيوكاسل', 'Newcastle': 'نيوكاسل', 'Nottingham Forest': 'نوتنغهام فورست', 'Sheffield United': 'شيفيلد يونايتد',
+  'Tottenham Hotspur': 'توتنهام', 'Tottenham': 'توتنهام', 'West Ham United': 'وست هام', 'West Ham': 'وست هام',
+  'Wolverhampton Wanderers': 'وولفرهامبتون', 'Wolves': 'وولفرهامبتون', 'Leeds United': 'ليدز يونايتد', 'Leeds': 'ليدز يونايتد',
+  'Leicester City': 'ليستر سيتي', 'Ipswich Town': 'إبسويتش', 'Southampton': 'ساوثهامبتون', 'Sunderland': 'سندرلاند',
+  // الدوري الإسباني
+  'Real Madrid': 'ريال مدريد', 'Barcelona': 'برشلونة', 'Atletico Madrid': 'أتلتيكو مدريد', 'Atlético Madrid': 'أتلتيكو مدريد',
+  'Sevilla': 'إشبيلية', 'Real Betis': 'ريال بيتيس', 'Real Sociedad': 'ريال سوسيداد', 'Villarreal': 'فياريال',
+  'Valencia': 'فالنسيا', 'Athletic Club': 'أتلتيك بيلباو', 'Athletic Bilbao': 'أتلتيك بيلباو', 'Girona': 'جيرونا',
+  'Osasuna': 'أوساسونا', 'Getafe': 'خيتافي', 'Celta Vigo': 'سيلتا فيغو', 'Rayo Vallecano': 'رايو فايكانو',
+  'Mallorca': 'مايوركا', 'Almeria': 'ألميريا', 'Cadiz': 'قادش', 'Granada': 'غرناطة', 'Las Palmas': 'لاس بالماس',
+  'Alaves': 'ألافيس', 'Espanyol': 'إسبانيول', 'Leganes': 'ليغانيس', 'Real Valladolid': 'بلد الوليد', 'Valladolid': 'بلد الوليد',
+  // الدوري الإيطالي
+  'Inter Milan': 'إنتر ميلان', 'Internazionale': 'إنتر ميلان', 'AC Milan': 'ميلان', 'Milan': 'ميلان',
+  'Juventus': 'يوفنتوس', 'Napoli': 'نابولي', 'AS Roma': 'روما', 'Roma': 'روما', 'Lazio': 'لاتسيو',
+  'Atalanta': 'أتالانتا', 'Fiorentina': 'فيورنتينا', 'Bologna': 'بولونيا', 'Torino': 'تورينو', 'Udinese': 'أودينيزي',
+  'Genoa': 'جنوى', 'Monza': 'مونزا', 'Lecce': 'ليتشي', 'Cagliari': 'كالياري', 'Empoli': 'إمبولي',
+  'Hellas Verona': 'هيلاس فيرونا', 'Verona': 'فيرونا', 'Sassuolo': 'ساسولو', 'Como': 'كومو', 'Parma': 'بارما', 'Venezia': 'فينيتسيا',
+  // الدوري الألماني
+  'Bayern Munich': 'بايرن ميونخ', 'Borussia Dortmund': 'بوروسيا دورتموند', 'Dortmund': 'بوروسيا دورتموند',
+  'RB Leipzig': 'لايبزيغ', 'Bayer Leverkusen': 'باير ليفركوزن', 'Leverkusen': 'باير ليفركوزن', 'Union Berlin': 'يونيون برلين',
+  'Eintracht Frankfurt': 'آينتراخت فرانكفورت', 'Wolfsburg': 'فولفسبورغ', 'Freiburg': 'فرايبورغ',
+  'Borussia Monchengladbach': 'بوروسيا مونشنغلادباخ', 'Werder Bremen': 'فيردر بريمن', 'Hoffenheim': 'هوفنهايم',
+  'Mainz': 'ماينز', 'Mainz 05': 'ماينز', 'VfB Stuttgart': 'شتوتغارت', 'Stuttgart': 'شتوتغارت', 'Augsburg': 'أوغسبورغ',
+  'FC Koln': 'كولن', 'Cologne': 'كولن', 'Bochum': 'بوخوم', 'Heidenheim': 'هايدنهايم', 'St. Pauli': 'سانت باولي', 'Holstein Kiel': 'هولشتاين كيل',
+  // الدوري الفرنسي
+  'Paris Saint-Germain': 'باريس سان جيرمان', 'PSG': 'باريس سان جيرمان', 'Marseille': 'مارسيليا', 'Monaco': 'موناكو',
+  'Lille': 'ليل', 'Lyon': 'ليون', 'Nice': 'نيس', 'Rennes': 'رين', 'Lens': 'لانس', 'Reims': 'ريمس',
+  'Nantes': 'نانت', 'Strasbourg': 'ستراسبورغ', 'Montpellier': 'مونبلييه', 'Toulouse': 'تولوز', 'Brest': 'بريست',
+  'Le Havre': 'لوهافر', 'Metz': 'ميتز', 'Lorient': 'لوريان', 'Auxerre': 'أوكسير', 'Angers': 'أنجيه', 'Saint-Etienne': 'سانت إتيان',
+  // الدوري السعودي
+  'Al Hilal': 'الهلال', 'Al Nassr': 'النصر', 'Al Ittihad': 'الاتحاد', 'Al Ahli Saudi FC': 'الأهلي السعودي', 'Al-Ahli Saudi': 'الأهلي السعودي',
+  'Al Ettifaq': 'الاتفاق', 'Al Fateh': 'الفتح', 'Al Taawoun': 'التعاون', 'Al Shabab': 'الشباب', 'Al Fayha': 'الفيحاء',
+  'Al Raed': 'الرائد', 'Al Khaleej': 'الخليج', 'Al Wehda': 'الوحدة', 'Al Riyadh': 'الرياض', 'Al Okhdood': 'الأخدود',
+  'Damac': 'ضمك', 'Abha': 'أبها', 'Al Hazem': 'الحزم', 'Al Kholood': 'الخلود', 'Al Orobah': 'العروبة',
+  // مصري وأفريقي
+  'Al Ahly': 'الأهلي', 'Zamalek': 'الزمالك', 'Pyramids': 'بيراميدز', 'Ismaily': 'الإسماعيلي', 'Al Masry': 'المصري',
+  'Esperance': 'الترجي', 'Esperance de Tunis': 'الترجي', 'Wydad': 'الوداد', 'Wydad Casablanca': 'الوداد', 'Raja Casablanca': 'الرجاء',
+  'Mamelodi Sundowns': 'ماميلودي صنداونز', 'TP Mazembe': 'مازيمبي', 'Simba': 'سيمبا', 'Young Africans': 'يانغ أفريكانز',
+  // الدوري الأمريكي MLS
+  'LAFC': 'لوس أنجلوس إف سي', 'Los Angeles FC': 'لوس أنجلوس إف سي', 'LA Galaxy': 'لوس أنجلوس غالاكسي',
+  'Inter Miami CF': 'إنتر ميامي', 'Inter Miami': 'إنتر ميامي', 'Sporting Kansas City': 'سبورتينغ كانساس سيتي',
+  'CF Montréal': 'سي إف مونتريال', 'CF Montreal': 'سي إف مونتريال', 'Orlando City SC': 'أورلاندو سيتي', 'Orlando City': 'أورلاندو سيتي',
+  'Nashville SC': 'ناشفيل', 'San Jose Earthquakes': 'سان خوسيه إيرثكواكس', 'FC Cincinnati': 'إف سي سينسيناتي',
+  'Atlanta United FC': 'أتلانتا يونايتد', 'Atlanta United': 'أتلانتا يونايتد', 'Austin FC': 'أوستن', 'Charlotte FC': 'شارلوت',
+  'Chicago Fire FC': 'شيكاغو فاير', 'Chicago Fire': 'شيكاغو فاير', 'Colorado Rapids': 'كولورادو رابيدز', 'Columbus Crew': 'كولومبوس كرو',
+  'D.C. United': 'دي سي يونايتد', 'DC United': 'دي سي يونايتد', 'FC Dallas': 'إف سي دالاس', 'Houston Dynamo FC': 'هيوستن دينامو', 'Houston Dynamo': 'هيوستن دينامو',
+  'Minnesota United FC': 'مينيسوتا يونايتد', 'Minnesota United': 'مينيسوتا يونايتد', 'New England Revolution': 'نيو إنغلاند',
+  'New York City FC': 'نيويورك سيتي', 'New York Red Bulls': 'نيويورك ريد بولز', 'Philadelphia Union': 'فيلادلفيا يونيون',
+  'Portland Timbers': 'بورتلاند تيمبرز', 'Real Salt Lake': 'ريال سولت لايك', 'Seattle Sounders FC': 'سياتل ساوندرز', 'Seattle Sounders': 'سياتل ساوندرز',
+  'St. Louis City SC': 'سانت لويس سيتي', 'Toronto FC': 'تورونتو', 'Vancouver Whitecaps FC': 'فانكوفر وايتكابس', 'Vancouver Whitecaps': 'فانكوفر وايتكابس',
+  // منتخبات
+  'Egypt': 'مصر', 'Saudi Arabia': 'السعودية', 'Morocco': 'المغرب', 'Algeria': 'الجزائر', 'Tunisia': 'تونس',
+  'Senegal': 'السنغال', 'Nigeria': 'نيجيريا', 'Cameroon': 'الكاميرون', 'Ghana': 'غانا', 'Ivory Coast': 'ساحل العاج',
+  'Mali': 'مالي', 'South Africa': 'جنوب أفريقيا', 'Brazil': 'البرازيل', 'Argentina': 'الأرجنتين', 'France': 'فرنسا',
+  'England': 'إنجلترا', 'Spain': 'إسبانيا', 'Germany': 'ألمانيا', 'Italy': 'إيطاليا', 'Portugal': 'البرتغال',
+  'Netherlands': 'هولندا', 'Belgium': 'بلجيكا', 'Croatia': 'كرواتيا', 'Uruguay': 'أوروغواي', 'Colombia': 'كولومبيا',
+  'Mexico': 'المكسيك', 'United States': 'الولايات المتحدة', 'USA': 'الولايات المتحدة', 'Japan': 'اليابان',
+  'South Korea': 'كوريا الجنوبية', 'Australia': 'أستراليا', 'Qatar': 'قطر', 'Iran': 'إيران', 'Switzerland': 'سويسرا',
+  'Denmark': 'الدنمارك', 'Poland': 'بولندا', 'Serbia': 'صربيا', 'Wales': 'ويلز', 'Scotland': 'اسكتلندا',
+  'Sweden': 'السويد', 'Norway': 'النرويج', 'Austria': 'النمسا', 'Ukraine': 'أوكرانيا', 'Turkey': 'تركيا',
+  'Greece': 'اليونان', 'Ecuador': 'الإكوادور', 'Peru': 'بيرو', 'Chile': 'تشيلي', 'Paraguay': 'باراغواي',
+};
+const TEAM_AR_LC = Object.fromEntries(Object.entries(TEAM_AR).map(([k, v]) => [k.toLowerCase(), v]));
+const arName = name => name ? (TEAM_AR[name] || TEAM_AR_LC[String(name).toLowerCase()] || name) : name;
+
 const state = {
   date: new Date(),
   mode: 'day',          // day = ماتشات يوم معين | league = جولات دوري كامل
@@ -966,10 +1038,12 @@ function xbetHome() {
   return (base || 'https://1xbet.com').replace(/\/+$/, '');
 }
 
-// نسخ اسم الماتش عشان تلزقه في بحث 1xBet
-function copyMatchName(it) {
-  const q = `${it.homeName} ${it.awayName}`;
-  const done = () => toast('📋 اسم الماتش اتنسخ — الصقه في بحث 1xBet');
+// نسخ اسم الماتش (عربي أو إنجليزي) عشان تلزقه في بحث 1xBet
+function copyMatchName(it, lang) {
+  const home = lang === 'ar' ? arName(it.homeName) : it.homeName;
+  const away = lang === 'ar' ? arName(it.awayName) : it.awayName;
+  const q = `${home} ${away}`;
+  const done = () => toast(`📋 اتنسخ ${lang === 'ar' ? 'بالعربي' : 'بالإنجليزي'} — الصقه في بحث 1xBet`);
   if (navigator.clipboard) navigator.clipboard.writeText(q).then(done).catch(done);
   else done();
 }
@@ -1012,7 +1086,10 @@ function openCoupon(slip) {
             <span class="si-league">🏆 ${escapeHtml(LEAGUE_NAME[it.league] || it.league)}</span>
             <span>${escapeHtml(it.pickLabel)} · ${it.marketLabel} · أودز ~${fmtOdds(oddsOf(it))}${started ? ' · بدأ/انتهى' : ''}</span>
           </div>
-          <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}">📋 انسخ الاسم</button>
+          <div class="cp-copybtns">
+            <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}" data-lang="ar">📋 عربي</button>
+            <button type="button" class="cp-open save-btn" data-k="${escapeHtml(k)}" data-lang="en">📋 EN</button>
+          </div>
         </label>`;
     }).join('');
 
@@ -1020,7 +1097,7 @@ function openCoupon(slip) {
     body.innerHTML = `
       <h3 class="preds-title">📋 حوّل «${escapeHtml(slip.name)}» لقسيمة 1xBet</h3>
       <p class="pillar-note" style="margin-bottom:12px">
-        زرار <b>«📋 انسخ الاسم»</b> جنب كل ماتش بينسخ اسمه — افتح 1xBet بنفسك، دوس بحث 🔎 والصقه، وضيفه لقسيمتك.
+        جنب كل ماتش زرارين نسخ: <b>«📋 عربي»</b> و<b>«📋 EN»</b> — لأن 1xBet ساعات بيلاقي الماتش بالعربي وساعات بالإنجليزي، فجرّب اللي يظبط. افتح 1xBet، دوس بحث 🔎 والصق.
         وزرار <b>«📋 انسخ القسيمة»</b> تحت بينسخ القسيمة كلها مرة واحدة.
         <b>الأودز تقديرية</b> — الرقم الفعلي بيظهر في 1xBet وقت الرهان، وانت اللي بتحدد تدخل بكام.
       </p>
@@ -1054,10 +1131,9 @@ function openCoupon(slip) {
       if (cb.checked) picked.add(cb.dataset.k); else picked.delete(cb.dataset.k);
       render();
     });
-    // رابط حقيقي (مش نافذة JS) — بيدي أعلى فرصة إن تطبيق 1xBet يفتح، والنسخ بيحصل مع الضغط
     body.querySelectorAll('.cp-open').forEach(b => b.onclick = () => {
       const it = slip.items.find(x => keyOf(x) === b.dataset.k);
-      if (it) copyMatchName(it);
+      if (it) copyMatchName(it, b.dataset.lang);
     });
     const copyBtn = $('#cp-copy');
     if (copyBtn) copyBtn.onclick = async () => {
